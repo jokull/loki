@@ -30,8 +30,9 @@ The component receives \`{ ...loaderProps, params }\`.
 - \`preact\`, \`preact/hooks\`, \`preact/jsx-runtime\` (JSX is auto-configured for preact).
 - \`preact-render-to-string\` (rendering is handled for you; rarely needed directly).
 - \`loki/runtime\` -> \`gql\` (tag GraphQL documents), \`query(env, document, variables)\`
-  (runs a GraphQL query against the CMS; drafts are visible in preview mode), and
-  \`renderStructuredText(value)\` (renders a Structured Text DAST value to Preact vnodes).
+  (runs a GraphQL query against the CMS; drafts are visible in preview mode),
+  \`renderStructuredText(value)\` (renders a Structured Text DAST value to Preact vnodes),
+  and \`Island\` (the client-hydration helper — see "Islands" below).
 - Relative imports between your own files must include the extension, e.g.
   \`import { Layout } from "./components/layout.tsx"\`.
 
@@ -75,6 +76,63 @@ with \`renderStructuredText\`. (Explore the exact fields first with the
         </main>
       );
     }
+
+## Islands (client-side interactivity)
+
+The site is SSR by default — server components + a route \`loader\` are the RIGHT
+tool for almost everything (data fetching, layout, content). Reach for an island
+ONLY when a piece of UI needs to run in the browser (local state, event handlers,
+timers). Everything else should stay server-rendered.
+
+An island is a normal component file (e.g. \`components/counter.tsx\`) that you drop
+into a page with the \`Island\` helper. It is server-rendered for first paint AND
+hydrated in the browser, so \`useState\`/\`useEffect\`/\`useRef\` (from \`preact/hooks\`)
+and event handlers work. The SAME file is imported server-side (for SSR) and
+served to the browser (for hydration) — no separate client bundle.
+
+    // components/counter.tsx
+    import { useState } from "preact/hooks";
+    export default function Counter({ initial = 0 }) {
+      const [n, setN] = useState(initial);
+      return (
+        <div class="counter">
+          <button onClick={() => setN(n - 1)}>-</button>
+          <output>{n}</output>
+          <button onClick={() => setN(n + 1)}>+</button>
+        </div>
+      );
+    }
+
+    // routes/index.tsx
+    import { Island } from "loki/runtime";
+    export default function Home() {
+      return (
+        <main>
+          <h1>Welcome</h1>
+          <Island src="components/counter.tsx" client="load" initial={5} />
+        </main>
+      );
+    }
+
+\`Island\` props:
+- \`src\` (required) — path of the component file in the site tree, e.g.
+  \`"components/counter.tsx"\` (extension recommended).
+- \`client\` — WHEN to hydrate: \`"load"\` (default, immediately), \`"idle"\`
+  (requestIdleCallback), or \`"visible"\` (on first scroll into view). Prefer
+  \`idle\`/\`visible\` for below-the-fold widgets.
+- everything else is passed to the component as props. Props MUST be
+  JSON-serializable (strings, numbers, booleans, null, arrays, plain objects) —
+  they are serialized at SSR and re-parsed to hydrate. Passing a function or
+  BigInt throws a clear error at render time. Islands do not receive children.
+
+Rules & notes:
+- Data is a SERVER concern: call \`query()\` in a route \`loader\` and pass the
+  result into the island as props. \`query()\` is server-only and THROWS in the
+  browser. Islands must not fetch from the CMS directly.
+- Loki injects an import map + a tiny hydration script into the page \`<head>\`
+  automatically, only when a page actually uses an island.
+- Islands require file-based routing (they don't work under a \`main.*\` escape
+  hatch).
 
 ## styles.css example
 

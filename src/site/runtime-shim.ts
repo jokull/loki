@@ -1,17 +1,65 @@
-// The `loki/runtime` module injected into every dynamic-site module map.
+// The `loki/runtime` module injected into every dynamic-site module map (server
+// form) and served to the browser (client form) for island hydration.
 //
-// It is authored as a plain-JS string (already "transpiled") and exposes the
-// site authoring API: `gql`, `query(env, doc, vars)`, and the file-based router
-// (`handleRequest`) that the generated site entry calls. Site route modules
-// import from here via `import { gql, query } from "loki/runtime"`.
+// Both forms are authored as plain-JS strings (already "transpiled") and share
+// the `gql` tag + `renderStructuredText` DAST renderer so the SAME component
+// file works whether it is imported server-side (SSR) or as a hydrated island.
 //
-// Keep this dependency-light: it imports only `preact` and
-// `preact-render-to-string`, both of which are vendored into the same map.
+// - RUNTIME_MODULE (server): injected into the isolate module map. Imports
+//   `preact` and `preact-render-to-string` (both vendored into the same map).
+//   Exposes `gql`, `query`, `renderStructuredText`, the file router
+//   (`handleRequest`) and the `Island` SSR helper.
+// - CLIENT_RUNTIME_MODULE (browser): served at `/__vendor/<ver>/loki-runtime.js`
+//   and resolved via the page import map. Imports only `preact`. `query()`
+//   throws (server-only); `renderToString`/`Island`/`handleRequest` throw too,
+//   so a component module that imports them still LOADS in the browser and only
+//   fails if a server-only API is actually called at runtime.
 
-export const RUNTIME_MODULE = String.raw`
-import { h, Fragment } from "preact";
-import { renderToString } from "preact-render-to-string";
+// --- island hydration bootstrap (inlined into the page <head> when needed) ----
+// Dependency-free beyond `preact` (imported dynamically, resolved by the page's
+// import map). Finds every <loki-island> marker and hydrates per its directive.
+const ISLAND_BOOTSTRAP = `(function(){
+  var hydrateOne = function(el){
+    var src = el.getAttribute("data-loki-src");
+    var props;
+    try { props = JSON.parse(el.getAttribute("data-loki-props") || "{}"); }
+    catch (e) { props = {}; }
+    Promise.all([import("preact"), import(src)]).then(function(mods){
+      var preact = mods[0];
+      var mod = mods[1];
+      var Component = mod && (mod.default || mod);
+      if (typeof Component === "function") {
+        preact.hydrate(preact.h(Component, props), el);
+      } else {
+        console.error("[loki island] " + src + " has no default export");
+      }
+    }).catch(function(err){
+      console.error("[loki island] hydration failed for " + src, err);
+    });
+  };
+  var els = document.querySelectorAll("loki-island[data-loki-src]");
+  for (var i = 0; i < els.length; i++) {
+    (function(el){
+      var client = el.getAttribute("data-loki-client") || "load";
+      if (client === "idle") {
+        (window.requestIdleCallback || function(f){ setTimeout(f, 1); })(function(){ hydrateOne(el); });
+      } else if (client === "visible" && "IntersectionObserver" in window) {
+        var io = new IntersectionObserver(function(entries, obs){
+          for (var j = 0; j < entries.length; j++) {
+            if (entries[j].isIntersecting) { obs.disconnect(); hydrateOne(el); }
+          }
+        });
+        io.observe(el);
+      } else {
+        hydrateOne(el);
+      }
+    })(els[i]);
+  }
+})();`;
 
+// --- shared: gql tag + Structured Text renderer (used by both forms) ---------
+// Depends only on `h` / `Fragment`, imported by whichever form includes it.
+const SHARED_RUNTIME = String.raw`
 // Identity tag for GraphQL documents. Enables extraction/validation at publish
 // and gives editors syntax highlighting. Interpolations are stringified.
 export function gql(strings, ...values) {
@@ -21,28 +69,6 @@ export function gql(strings, ...values) {
   }
   return out;
 }
-
-// Run a GraphQL query against the CMS via the loopback GRAPHQL binding.
-// The supervisor fixes draft/published visibility on the binding itself.
-export async function query(env, document, variables) {
-  if (!env || !env.GRAPHQL) {
-    throw new Error("query(): env.GRAPHQL binding is not available");
-  }
-  const res = await env.GRAPHQL.fetch("https://graphql.internal/graphql", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ query: document, variables: variables || {} }),
-  });
-  const json = await res.json();
-  if (json.errors && json.errors.length) {
-    throw new Error(
-      "GraphQL error: " + json.errors.map((e) => e.message).join("; "),
-    );
-  }
-  return json.data;
-}
-
-export { h, Fragment, renderToString };
 
 // ---- structured text --------------------------------------------------------
 
@@ -119,6 +145,108 @@ export function renderStructuredText(value) {
   if (!doc) return null;
   return h(Fragment, null, __dastChildren(doc));
 }
+`;
+
+// --- server form: query + routing + Island SSR helper ------------------------
+const SERVER_RUNTIME = String.raw`
+// Run a GraphQL query against the CMS via the loopback GRAPHQL binding.
+// The supervisor fixes draft/published visibility on the binding itself.
+export async function query(env, document, variables) {
+  if (!env || !env.GRAPHQL) {
+    throw new Error("query(): env.GRAPHQL binding is not available");
+  }
+  const res = await env.GRAPHQL.fetch("https://graphql.internal/graphql", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ query: document, variables: variables || {} }),
+  });
+  const json = await res.json();
+  if (json.errors && json.errors.length) {
+    throw new Error(
+      "GraphQL error: " + json.errors.map((e) => e.message).join("; "),
+    );
+  }
+  return json.data;
+}
+
+export { h, Fragment, renderToString };
+
+// ---- islands (partial hydration) --------------------------------------------
+
+// Populated per-request by handleRequest (see below). Because renderToString is
+// synchronous and these are set immediately before it with no intervening await,
+// a single request's render never interleaves with another's.
+let __islandRegistry = {};
+let __islandBase = "/__modules/draft";
+let __islandUsed = false;
+
+function __stripModuleExt(p) {
+  return p.replace(/\.(tsx|ts|jsx|mjs|js)$/, "");
+}
+
+function __serializeIslandProps(src, props) {
+  try {
+    return JSON.stringify(props, function (key, value) {
+      if (typeof value === "function") {
+        throw new Error("prop '" + key + "' is a function");
+      }
+      if (typeof value === "bigint") {
+        throw new Error("prop '" + key + "' is a BigInt");
+      }
+      return value;
+    });
+  } catch (e) {
+    throw new Error(
+      'Island "' + src + '": props must be JSON-serializable (' + e.message + ").",
+    );
+  }
+}
+
+/**
+ * SSR an interactive island. Usage:
+ *   <Island src="components/counter.tsx" client="load" initial={5} />
+ * Renders the module's default component to HTML now, wraps it in a
+ * <loki-island> marker carrying the browser module URL, the serialized props,
+ * and the client directive ("load" | "idle" | "visible"), and flags the page so
+ * the head gets an import map + the hydration bootstrap. Props must round-trip
+ * as JSON. The SAME module is SSR'd here and hydrated in the browser.
+ */
+export function Island(props) {
+  props = props || {};
+  const src = props.src;
+  if (!src) {
+    throw new Error("Island requires a 'src' prop (e.g. 'components/counter.tsx').");
+  }
+  const client = props.client || "load";
+  const rest = {};
+  for (const k in props) {
+    if (k === "src" || k === "client" || k === "children") continue;
+    rest[k] = props[k];
+  }
+  const mod = __islandRegistry[src] || __islandRegistry[__stripModuleExt(src)];
+  if (!mod) {
+    const known = Object.keys(__islandRegistry).sort().join(", ") || "(none)";
+    throw new Error(
+      'Island "' + src + '": no such module in the site tree. Known modules: ' + known,
+    );
+  }
+  const Component = mod.default;
+  if (typeof Component !== "function") {
+    throw new Error('Island "' + src + '": module has no default component export.');
+  }
+  const propsJson = __serializeIslandProps(src, rest);
+  __islandUsed = true;
+  return h(
+    "loki-island",
+    {
+      "data-loki-src": __islandBase + "/" + src,
+      "data-loki-props": propsJson,
+      "data-loki-client": client,
+      style: "display:contents",
+    },
+    h(Component, rest),
+  );
+}
 
 // ---- routing ----------------------------------------------------------------
 
@@ -185,6 +313,24 @@ function renderHead(head, hasStyles) {
   return parts.join("");
 }
 
+const __ISLAND_BOOTSTRAP = ${JSON.stringify(ISLAND_BOOTSTRAP)};
+
+function renderIslandHead(vendorBase) {
+  const vb = vendorBase || "/__vendor";
+  const importMap = {
+    imports: {
+      preact: vb + "/preact.js",
+      "preact/hooks": vb + "/preact-hooks.js",
+      "preact/jsx-runtime": vb + "/preact-jsx-runtime.js",
+      "loki/runtime": vb + "/loki-runtime.js",
+    },
+  };
+  return (
+    '<script type="importmap">' + JSON.stringify(importMap) + "</script>" +
+    '<script type="module">' + __ISLAND_BOOTSTRAP + "</script>"
+  );
+}
+
 function htmlResponse(body, status) {
   return new Response(body, {
     status: status || 200,
@@ -194,7 +340,7 @@ function htmlResponse(body, status) {
 
 /**
  * Handle a request against the site's file-based routes.
- * config = { routes: [{ pattern, mod }], styles: string | null }.
+ * config = { routes, styles, islands, vendorBase, islandBase }.
  */
 export async function handleRequest(request, env, ctx, config) {
   const url = new URL(request.url);
@@ -237,13 +383,20 @@ export async function handleRequest(request, env, ctx, config) {
   let head = mod.head;
   if (typeof head === "function") head = head(props);
 
+  // Prime island context, then render synchronously (no await until we've read
+  // back whether any island was used) so requests can't clobber each other.
+  __islandRegistry = config.islands || {};
+  __islandBase = (env && env.LOKI_ISLAND_BASE) || config.islandBase || "/__modules/draft";
+  __islandUsed = false;
   const bodyHtml = renderToString(
     h(Component, Object.assign({}, props, { params: matched.params })),
   );
+  const islandHead = __islandUsed ? renderIslandHead(config.vendorBase) : "";
 
   const doc =
     "<!doctype html><html><head>" +
     renderHead(head, config.styles != null) +
+    islandHead +
     '</head><body><div id="app">' +
     bodyHtml +
     "</div></body></html>";
@@ -251,3 +404,35 @@ export async function handleRequest(request, env, ctx, config) {
   return htmlResponse(doc, 200);
 }
 `;
+
+// --- client form: browser stubs for server-only APIs -------------------------
+const CLIENT_RUNTIME = String.raw`
+export function query() {
+  throw new Error(
+    "query() is server-only — it cannot run in the browser. Fetch data in a route " +
+      "loader (server) and pass it into the island via props.",
+  );
+}
+
+export function renderToString() {
+  throw new Error("renderToString() is server-only and unavailable in the browser.");
+}
+
+export function Island() {
+  throw new Error("Island() is a server-side SSR helper and cannot run in the browser.");
+}
+
+export { h, Fragment };
+`;
+
+// Assemble the two module strings. The `${JSON.stringify(ISLAND_BOOTSTRAP)}`
+// inside SERVER_RUNTIME above is a real String.raw interpolation: it emits the
+// bootstrap source as a JS string literal assigned to __ISLAND_BOOTSTRAP.
+export const RUNTIME_MODULE =
+  'import { h, Fragment } from "preact";\n' +
+  'import { renderToString } from "preact-render-to-string";\n' +
+  SHARED_RUNTIME +
+  SERVER_RUNTIME;
+
+export const CLIENT_RUNTIME_MODULE =
+  'import { h, Fragment } from "preact";\n' + SHARED_RUNTIME + CLIENT_RUNTIME;

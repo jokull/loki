@@ -11,6 +11,7 @@
 
 import type { Env } from "../env";
 import { buildWorkerCode, RUNTIME_VERSION, type Bundle } from "./bundle";
+import { serveModule, serveVendor } from "./assets";
 import {
   getPublishedVersionId,
   getVersion,
@@ -64,11 +65,14 @@ async function runSite(
   bundle: Bundle,
   includeDrafts: boolean,
   request: Request,
+  islandBase: string,
 ): Promise<Response> {
   const built = buildWorkerCode(bundle);
   const graphql = makeGraphqlBinding(ctx, includeDrafts);
   const workerEnv: Record<string, unknown> = {
     GRAPHQL_DRAFTS: includeDrafts ? "true" : "false",
+    // Version-aware base for island module URLs, read by the runtime shim.
+    LOKI_ISLAND_BASE: islandBase,
   };
   if (graphql) workerEnv.GRAPHQL = graphql;
   const stub = env.LOADER.get(loaderId, () => ({
@@ -100,7 +104,15 @@ export async function smokeRender(
   bundle: Bundle,
 ): Promise<Response> {
   const id = `smoke:${RUNTIME_VERSION}:${await sha256Hex(stableStringify(bundle))}:${Date.now()}`;
-  return runSite(env, ctx, id, bundle, true, new Request("https://loki.internal/"));
+  return runSite(
+    env,
+    ctx,
+    id,
+    bundle,
+    true,
+    new Request("https://loki.internal/"),
+    "/__modules/draft",
+  );
 }
 
 const NO_SITE = `<!doctype html><html><head><meta charset="utf-8"><title>Loki</title></head><body style="font-family:system-ui;max-width:40rem;margin:4rem auto;padding:0 1rem"><h1>Loki</h1><p>No site has been published yet. Use the <code>site_write</code> and <code>publish_site</code> MCP tools to build one.</p></body></html>`;
@@ -156,7 +168,7 @@ export async function serveDraft(
   const bundle = await buildDraftBundle(env);
   if (Object.keys(bundle).length === 0) return placeholder();
   const id = `draft:${RUNTIME_VERSION}:${await sha256Hex(stableStringify(bundle))}`;
-  return runSite(env, ctx, id, bundle, true, request);
+  return runSite(env, ctx, id, bundle, true, request, "/__modules/draft");
 }
 
 /** Serve the currently published site version. */
@@ -170,7 +182,15 @@ export async function servePublished(
   const version = await getVersion(env, versionId);
   if (!version) return placeholder();
   const bundle = JSON.parse(version.bundle) as Bundle;
-  return runSite(env, ctx, `site:v${versionId}:${RUNTIME_VERSION}`, bundle, false, request);
+  return runSite(
+    env,
+    ctx,
+    `site:v${versionId}:${RUNTIME_VERSION}`,
+    bundle,
+    false,
+    request,
+    `/__modules/v${versionId}`,
+  );
 }
 
 /**
@@ -183,6 +203,16 @@ export async function serveSite(
   request: Request,
 ): Promise<Response> {
   const url = new URL(request.url);
+
+  // Browser-facing island assets (served regardless of published state).
+  if (url.pathname.startsWith("/__vendor/")) {
+    return serveVendor(url.pathname);
+  }
+  if (url.pathname.startsWith("/__modules/")) {
+    const cookie = getCookie(request, PREVIEW_COOKIE);
+    const previewOk = !!cookie && (await isValidPreviewToken(env, cookie));
+    return serveModule(env, url.pathname, previewOk);
+  }
 
   if (url.pathname === "/__preview") {
     const token = url.searchParams.get("token") ?? "";
