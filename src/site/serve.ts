@@ -12,6 +12,7 @@
 import type { Env } from "../env";
 import { buildWorkerCode, RUNTIME_VERSION, type Bundle } from "./bundle";
 import { serveModule, serveVendor } from "./assets";
+import { serveStaticAsset } from "./static-assets";
 import {
   getPublishedVersionId,
   getVersion,
@@ -270,8 +271,18 @@ export async function serveSite(
   }
 
   const cookie = getCookie(request, PREVIEW_COOKIE);
-  if (cookie && (await isValidPreviewToken(env, cookie))) {
-    return serveDraft(env, ctx, request);
+  const previewOk = !!cookie && (await isValidPreviewToken(env, cookie));
+
+  // Routes take precedence over static files: dispatch to the site worker
+  // first, and only fall back to a public/ static asset when it 404s. The
+  // isolate is cache-warm, so the fallback costs one extra R2 lookup on a
+  // genuine miss. Draft cookie -> draft manifest; otherwise published manifest.
+  const response = previewOk
+    ? await serveDraft(env, ctx, request)
+    : await servePublished(env, ctx, request);
+  if (response.status === 404) {
+    const asset = await serveStaticAsset(env, request, { draft: previewOk });
+    if (asset) return asset;
   }
-  return servePublished(env, ctx, request);
+  return response;
 }

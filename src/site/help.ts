@@ -266,6 +266,86 @@ the reload — is left to you.)
 
     body { font-family: system-ui, sans-serif; max-width: 42rem; margin: 2rem auto; }
 
+## Assets (favicons, images, fonts, downloads) — "it's just a file"
+
+Static/design files live under \`public/\` and serve at the site ROOT. There is
+exactly ONE rule:
+
+    public/favicon.ico      ->  /favicon.ico
+    public/img/hero.jpg     ->  /img/hero.jpg
+    public/files/brochure.pdf -> /files/brochure.pdf
+
+Two tools mirror site_write; BOTH require a \`public/…\` path and BOTH return JSON
+\`{ path, url, hash, size, contentType }\` where **\`url\` is the exact string to
+paste into markup/CSS** (already root-mapped — do NOT prefix it with \`public/\`):
+
+- \`site_asset_import({ path, url })\` — Loki fetches the URL (it has network
+  access; your site worker does not) and stores the bytes. Use for anything but
+  tiny files (photos, og-images, downloads).
+- \`site_asset_write({ path, base64, contentType? })\` — decode base64 bytes.
+  For SMALL files only (favicon, inline SVG); ~2 MB cap, over which it errors and
+  tells you to use site_asset_import. \`contentType\` is inferred from the
+  extension if omitted.
+
+Assets are DRAFT until you publish, and they version / preview / rollback exactly
+like code: preview shows the draft manifest (no-store), the published site serves
+the version's snapshot (ETag = content hash, \`Cache-Control: public, max-age=300,
+must-revalidate\`), and rollback_site restores that version's asset set (a rollback
+to before an asset was added makes it 404 — assets are version-pinned).
+
+RESERVED — a \`public/\` path whose root URL is one of these is rejected (Loki/CMS
+own them): /mcp, /graphql, /api/*, /assets/*, /uploads/*, /health, /paths/*,
+/openapi.json, and /__* (/__vendor, /__modules, /__preview, /__realtime).
+(\`/assets/*\` and \`/uploads/*\` are the CMS *content* asset routes — different from
+these site files.)
+
+### Worked example: favicon + og-image + CSS hero + a download
+
+    // 1) favicon — tiny, so write it inline as base64 (or import a URL):
+    site_asset_write({
+      path: "public/favicon.ico",
+      base64: "<base64 bytes>",           // data: URL prefix is tolerated
+    })
+    // -> { "url": "/favicon.ico", "hash": "…", "size": 1150, "contentType": "image/x-icon" }
+
+    // 2) og-image — import a real image by URL:
+    site_asset_import({ path: "public/og.png", url: "https://example.com/og.png" })
+    // -> { "url": "/og.png", … }
+
+    // 3) hero photo used from CSS:
+    site_asset_import({ path: "public/img/hero.jpg", url: "https://example.com/hero.jpg" })
+    // -> { "url": "/img/hero.jpg", … }
+
+    // 4) a downloadable PDF:
+    site_asset_import({ path: "public/files/brochure.pdf", url: "https://example.com/brochure.pdf" })
+    // -> { "url": "/files/brochure.pdf", … }
+
+Reference the returned \`url\` strings verbatim:
+
+    // routes/index.tsx — favicon + og-image in <head>
+    export const head = {
+      title: "Home",
+      links: [{ rel: "icon", href: "/favicon.ico" }],
+      meta: [{ name: "og:image", content: "/og.png" }],
+    };
+    export default function Home() {
+      return (
+        <main class="hero">
+          <h1>Welcome</h1>
+          <a href="/files/brochure.pdf" download>Download the brochure (PDF)</a>
+        </main>
+      );
+    }
+
+    /* styles.css — hero background from the imported image */
+    .hero { background: url(/img/hero.jpg) center / cover no-repeat; min-height: 60vh; }
+
+Then \`publish_site\` — it snapshots the asset manifest into the version and warns
+(non-fatal) about any \`/foo.ext\` reference in your code that has no matching
+\`public/foo.ext\` asset. \`site_list\` shows assets alongside code; \`site_read\` on a
+\`public/…\` path returns metadata (not bytes); \`site_delete\` removes an asset;
+\`site_diff\` shows added/changed/removed assets (compared by content hash).
+
 ## GraphQL notes
 
 - Prototype queries with the \`graphql_query\` MCP tool before wiring them into a
@@ -310,4 +390,6 @@ preview_site again once the 30-minute token has expired.
 
 Other tools: graphql_query({query, variables?, includeDrafts?}) (explore the content
 API / introspection), site_read(path), site_list(), site_delete(path), site_diff()
-(shows added/removed/changed paths vs the published version).`;
+(shows added/removed/changed paths vs the published version), and the asset tools
+site_asset_import({path, url}) / site_asset_write({path, base64, contentType?}) —
+see the "Assets" section above.`;
