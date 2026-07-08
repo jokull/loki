@@ -1,6 +1,7 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
 import type { Env } from "./env";
 import { getCms } from "./env";
+import { classifyRestSchemaOp, guardRestSchemaOp } from "./guard";
 import { handleMcp } from "./mcp";
 import { serveSite } from "./site/serve";
 
@@ -54,6 +55,62 @@ function isCmsPath(pathname: string): boolean {
   return CMS_PREFIXES.some((p) => pathname.startsWith(p));
 }
 
+/**
+ * Forward an `/api/models/...` request to agent-cms, running the migration
+ * guard first for destructive schema ops (DELETE model/field, breaking PATCH).
+ * On veto, returns 409 JSON carrying the same instructive reason the MCP seam
+ * uses. The PATCH body is read once here and replayed into the forwarded
+ * request so agent-cms still receives it.
+ */
+async function guardedCmsForward(
+  request: Request,
+  env: Env,
+  url: URL,
+): Promise<Response> {
+  const method = request.method.toUpperCase();
+  if (method !== "DELETE" && method !== "PATCH") {
+    return getCms(env, url.origin).fetch(request);
+  }
+
+  let forward = request;
+  let body: unknown = undefined;
+  if (method === "PATCH") {
+    const raw = await request.text();
+    if (raw) {
+      try {
+        body = JSON.parse(raw);
+      } catch {
+        body = undefined;
+      }
+    }
+    // Rebuild an equivalent request since the body stream was consumed.
+    forward = new Request(request.url, {
+      method,
+      headers: request.headers,
+      body: raw,
+    });
+  }
+
+  const descriptor = classifyRestSchemaOp(method, url.pathname, body);
+  if (descriptor) {
+    const verdict = await guardRestSchemaOp(env, descriptor);
+    if (!verdict.allowed) {
+      return new Response(
+        JSON.stringify({
+          error: "migration_guard_blocked",
+          message: `Blocked by Loki migration guard: ${verdict.reason}`,
+        }),
+        {
+          status: 409,
+          headers: { "content-type": "application/json; charset=utf-8" },
+        },
+      );
+    }
+  }
+
+  return getCms(env, url.origin).fetch(forward);
+}
+
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
@@ -65,6 +122,12 @@ export default {
     }
 
     if (isCmsPath(pathname)) {
+      // Guard the destructive schema REST seam (DELETE/PATCH on models/fields)
+      // with the same expand/contract check as the MCP endpoint before
+      // forwarding to agent-cms. Non-guarded requests pass straight through.
+      if (pathname.startsWith("/api/models/")) {
+        return guardedCmsForward(request, env, url);
+      }
       return getCms(env, url.origin).fetch(request);
     }
 
