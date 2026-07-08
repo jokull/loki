@@ -7,6 +7,12 @@ import { serveSite } from "./site/serve";
 
 export type { Env };
 
+// Durable Object + ctx.exports entrypoints for the dynamic site worker. They are
+// re-exported from the main module so `ctx.exports.<Name>` resolves them and so
+// wrangler can bind the Durable Object class by name.
+export { ChannelDO, RealtimeEntrypoint } from "./realtime";
+export { RecordsEntrypoint } from "./records";
+
 /**
  * Loopback GraphQL entrypoint for the dynamic site worker.
  *

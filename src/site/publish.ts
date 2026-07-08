@@ -16,7 +16,7 @@ import {
 import type { Env } from "../env";
 import { getCms } from "../env";
 import { buildDraftBundle, smokeRender } from "./serve";
-import { insertVersion, listFiles, setState } from "./store";
+import { insertVersion, listFiles, readFile, setState } from "./store";
 
 export interface ExtractedDoc {
   /** Where it came from (file path, optionally with an index for gql templates). */
@@ -159,6 +159,57 @@ function namedTypeName(type: unknown): string | null {
   return t && typeof t.name === "string" ? t.name : null;
 }
 
+/**
+ * Validate the draft's loki.config.json (if present): it must parse as a JSON
+ * object, and every `writableModels` entry must name a model that exists in D1.
+ * These models become the RECORDS.create allowlist for the published tree.
+ */
+export async function validateSiteConfig(
+  env: Env,
+): Promise<{ ok: true; models: string[] } | { ok: false; error: string }> {
+  const file = await readFile(env, "loki.config.json");
+  if (!file) return { ok: true, models: [] };
+
+  let cfg: unknown;
+  try {
+    cfg = JSON.parse(file.source);
+  } catch (err) {
+    return {
+      ok: false,
+      error: `loki.config.json is not valid JSON: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+  if (cfg == null || typeof cfg !== "object" || Array.isArray(cfg)) {
+    return { ok: false, error: "loki.config.json must be a JSON object." };
+  }
+
+  const wm = (cfg as { writableModels?: unknown }).writableModels;
+  if (wm === undefined) return { ok: true, models: [] };
+  if (!Array.isArray(wm) || !wm.every((m) => typeof m === "string")) {
+    return {
+      ok: false,
+      error:
+        'loki.config.json "writableModels" must be an array of model api_key strings.',
+    };
+  }
+  if (wm.length === 0) return { ok: true, models: [] };
+
+  const { results } = await env.DB.prepare(
+    "SELECT api_key FROM models",
+  ).all<{ api_key: string }>();
+  const known = new Set((results ?? []).map((r) => r.api_key));
+  const missing = (wm as string[]).filter((m) => !known.has(m));
+  if (missing.length) {
+    return {
+      ok: false,
+      error:
+        `loki.config.json writableModels references unknown model(s): ${missing.join(", ")}. ` +
+        `Known models: ${[...known].sort().join(", ") || "(none)"}.`,
+    };
+  }
+  return { ok: true, models: wm as string[] };
+}
+
 export type PublishResult =
   | {
       ok: true;
@@ -200,6 +251,12 @@ export async function publishSite(
       stage: "graphql-validation",
       error: `GraphQL validation failed against the live schema:\n${detail}`,
     };
+  }
+
+  // (b2) validate loki.config.json (writableModels must reference real models)
+  const config = await validateSiteConfig(env);
+  if (!config.ok) {
+    return { ok: false, stage: "config-validation", error: config.error };
   }
 
   // (c) footprint

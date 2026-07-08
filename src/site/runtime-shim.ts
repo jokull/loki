@@ -171,6 +171,14 @@ export async function query(env, document, variables) {
 
 export { h, Fragment, renderToString };
 
+// Realtime is a browser capability: subscribing happens in a hydrated island.
+export function connectChannel() {
+  throw new Error(
+    "connectChannel() is client-only — call it inside an island (browser), " +
+      "e.g. in a useEffect. To PUSH messages from the server use env.REALTIME.publish().",
+  );
+}
+
 // ---- islands (partial hydration) --------------------------------------------
 
 // Populated per-request by handleRequest (see below). Because renderToString is
@@ -338,6 +346,30 @@ function htmlResponse(body, status) {
   });
 }
 
+// Normalize a route action(...) return value into a Response:
+//   - a Response (incl. Response.redirect(...)) -> passed through unchanged
+//   - { redirect: "/path" } sentinel            -> 303 See Other to that path
+//   - null / undefined                          -> 204 No Content
+//   - any other plain value                     -> 200 JSON
+function normalizeActionResult(result) {
+  if (result instanceof Response) return result;
+  if (
+    result &&
+    typeof result === "object" &&
+    typeof result.redirect === "string"
+  ) {
+    return new Response(null, {
+      status: 303,
+      headers: { location: result.redirect },
+    });
+  }
+  if (result == null) return new Response(null, { status: 204 });
+  return new Response(JSON.stringify(result), {
+    status: 200,
+    headers: { "content-type": "application/json; charset=utf-8" },
+  });
+}
+
 /**
  * Handle a request against the site's file-based routes.
  * config = { routes, styles, islands, vendorBase, islandBase }.
@@ -364,6 +396,21 @@ export async function handleRequest(request, env, ctx, config) {
   }
 
   const mod = matched.route.mod;
+
+  // Non-GET/HEAD requests dispatch to the route's action(...) export instead of
+  // rendering. No action -> 405 Method Not Allowed.
+  const method = request.method.toUpperCase();
+  if (method !== "GET" && method !== "HEAD") {
+    if (typeof mod.action !== "function") {
+      return new Response("Method Not Allowed", {
+        status: 405,
+        headers: { allow: "GET, HEAD", "content-type": "text/plain; charset=utf-8" },
+      });
+    }
+    const result = await mod.action({ request, env, params: matched.params });
+    return normalizeActionResult(result);
+  }
+
   const Component = mod.default;
   if (typeof Component !== "function") {
     return htmlResponse(
@@ -420,6 +467,48 @@ export function renderToString() {
 
 export function Island() {
   throw new Error("Island() is a server-side SSR helper and cannot run in the browser.");
+}
+
+// Subscribe to a realtime channel from the browser. Opens a WebSocket to
+// /__realtime/<name> (wss when the page is https), JSON-parses each message and
+// hands it to onMessage, and auto-reconnects with capped exponential backoff.
+// Returns { close } to tear the subscription down (e.g. from a useEffect cleanup).
+export function connectChannel(name, onMessage) {
+  if (typeof WebSocket === "undefined" || typeof location === "undefined") {
+    throw new Error("connectChannel() requires a browser environment.");
+  }
+  var proto = location.protocol === "https:" ? "wss:" : "ws:";
+  var url = proto + "//" + location.host + "/__realtime/" + encodeURIComponent(name);
+  var ws = null;
+  var closed = false;
+  var attempt = 0;
+  var timer = null;
+  function connect() {
+    if (closed) return;
+    ws = new WebSocket(url);
+    ws.addEventListener("open", function () { attempt = 0; });
+    ws.addEventListener("message", function (ev) {
+      var data = ev.data;
+      try { data = JSON.parse(ev.data); } catch (e) { /* leave as raw string */ }
+      try { onMessage(data); }
+      catch (e) { console.error("[loki channel] onMessage threw", e); }
+    });
+    ws.addEventListener("close", function () { scheduleReconnect(); });
+    ws.addEventListener("error", function () { try { ws.close(); } catch (e) {} });
+  }
+  function scheduleReconnect() {
+    if (closed) return;
+    var delay = Math.min(30000, 500 * Math.pow(2, attempt++));
+    timer = setTimeout(connect, delay);
+  }
+  connect();
+  return {
+    close: function () {
+      closed = true;
+      if (timer) clearTimeout(timer);
+      if (ws) { try { ws.close(); } catch (e) {} }
+    },
+  };
 }
 
 export { h, Fragment };

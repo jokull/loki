@@ -45,6 +45,11 @@ function stableStringify(bundle: Bundle): string {
   return JSON.stringify(keys.map((k) => [k, bundle[k]]));
 }
 
+function ctxExports(ctx: ExecutionContext): Record<string, any> {
+  // ctx.exports is typed from the (undeclared) main-module GlobalProps, so cast.
+  return (ctx as unknown as { exports: Record<string, any> }).exports;
+}
+
 /**
  * Create the loopback GRAPHQL binding for the dynamic worker. Uses ctx.exports
  * (loopback WorkerEntrypoint) with `includeDrafts` fixed via entrypoint props.
@@ -53,9 +58,22 @@ function makeGraphqlBinding(
   ctx: ExecutionContext,
   includeDrafts: boolean,
 ): Fetcher {
-  // ctx.exports is typed from the (undeclared) main-module GlobalProps, so cast.
-  const exports = (ctx as unknown as { exports: Record<string, any> }).exports;
-  return exports.GraphqlEntrypoint({ props: { includeDrafts } }) as Fetcher;
+  return ctxExports(ctx).GraphqlEntrypoint({ props: { includeDrafts } }) as Fetcher;
+}
+
+/** Parse the writable-model allowlist from the serving tree's loki.config.json. */
+export function parseWritableModels(bundle: Bundle): string[] {
+  const raw = bundle["loki.config.json"];
+  if (!raw) return [];
+  try {
+    const cfg = JSON.parse(raw) as { writableModels?: unknown };
+    const list = cfg?.writableModels;
+    return Array.isArray(list)
+      ? list.filter((m): m is string => typeof m === "string")
+      : [];
+  } catch {
+    return [];
+  }
 }
 
 async function runSite(
@@ -69,12 +87,23 @@ async function runSite(
 ): Promise<Response> {
   const built = buildWorkerCode(bundle);
   const graphql = makeGraphqlBinding(ctx, includeDrafts);
+  const exports = ctxExports(ctx);
   const workerEnv: Record<string, unknown> = {
     GRAPHQL_DRAFTS: includeDrafts ? "true" : "false",
     // Version-aware base for island module URLs, read by the runtime shim.
     LOKI_ISLAND_BASE: islandBase,
   };
   if (graphql) workerEnv.GRAPHQL = graphql;
+  // Scoped record writes: RECORDS.create is gated by this tree's allowlist.
+  if (exports?.RecordsEntrypoint) {
+    workerEnv.RECORDS = exports.RecordsEntrypoint({
+      props: { allowlist: parseWritableModels(bundle) },
+    });
+  }
+  // Realtime fan-out: REALTIME.publish(channel, message).
+  if (exports?.RealtimeEntrypoint) {
+    workerEnv.REALTIME = exports.RealtimeEntrypoint({});
+  }
   const stub = env.LOADER.get(loaderId, () => ({
     compatibilityDate: built.compatibilityDate,
     mainModule: built.mainModule,
@@ -203,6 +232,19 @@ export async function serveSite(
   request: Request,
 ): Promise<Response> {
   const url = new URL(request.url);
+
+  // Realtime channel WebSocket supervisor: /__realtime/<channel> -> ChannelDO.
+  if (url.pathname.startsWith("/__realtime/")) {
+    const channel = decodeURIComponent(url.pathname.slice("/__realtime/".length));
+    if (!channel || channel.includes("/")) {
+      return new Response("Invalid channel name", { status: 400 });
+    }
+    if (request.headers.get("Upgrade") !== "websocket") {
+      return new Response("Expected a WebSocket upgrade", { status: 426 });
+    }
+    const id = env.CHANNELS.idFromName(channel);
+    return env.CHANNELS.get(id).fetch(request);
+  }
 
   // Browser-facing island assets (served regardless of published state).
   if (url.pathname.startsWith("/__vendor/")) {

@@ -3,6 +3,8 @@ import { createCMSHandler } from "agent-cms";
 export interface Env {
   DB: D1Database;
   LOADER: WorkerLoader;
+  /** Durable Object namespace backing realtime channels (see src/realtime.ts). */
+  CHANNELS: DurableObjectNamespace<import("./realtime").ChannelDO>;
   WRITE_KEY?: string;
   ENVIRONMENT?: "production" | "development";
 }
