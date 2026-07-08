@@ -79,12 +79,15 @@ On top of the full agent-cms toolset (models, fields, records, publishing, asset
 | Tool | What it does |
 | --- | --- |
 | `site_write` / `site_read` / `site_list` / `site_delete` | Edit the draft tree; writes transpile immediately and reject on error |
-| `site_diff` | Draft vs. published: added / changed / removed |
+| `site_asset_import` / `site_asset_write` | Add design images and one-off files (favicon, OG image, hero, downloads) by URL or bytes; returns the exact URL to paste |
+| `site_diff` | Draft vs. published: added / changed / removed, code and assets |
 | `graphql_query` | Explore the content API (introspection included) before writing route queries |
 | `preview_site` | Token URL serving the draft at the real domain |
 | `publish_site` | Validate queries → extract footprint → smoke render → snapshot → go live |
 | `site_versions` / `rollback_site` | List immutable versions; repoint the live pointer |
 | `site_help` | The authoring guide, served by the endpoint itself |
+
+Beyond static pages, routes can export an `action` to handle form POSTs, write to allowlisted content models (`env.RECORDS`), and push to WebSocket channels (`env.REALTIME`) — and any component can become a hydrated **Preact island** (`<Island client="visible">`) for client-side interactivity, served with no bundler via native ES modules and import maps. A live realtime guestbook, forms, and design assets all run this way today.
 
 ## Quickstart
 
@@ -131,12 +134,17 @@ The same check covers the REST API (409). Non-breaking updates (labels, validato
 
 ## Status & roadmap
 
-This is a working experiment, not a product. Rough edges are documented by the tools themselves. Planned:
+This is a working experiment, not a product. Rough edges are documented by the tools themselves.
+
+Working today: schema + content + code + design at runtime, immutable versions with rollback, the migration guard, preview at a real URL, **Preact islands** (partial hydration, no bundler), **form actions** with scoped record writes, **realtime channels** (WebSocket-backed Durable Objects), and **content-addressed static/design assets** in R2 (version-pinned, served with ETag/304).
+
+Planned:
 
 - **Cloudflare Artifacts** as the site-code store (git-compatible branches, diffs, and a `git clone` escape hatch) once it exits private beta — D1 is the store today
 - Code Mode on the merged endpoint (one `code` tool instead of forty)
-- R2-backed site assets (images, fonts)
-- Client-side islands (currently SSR-only, plain `<script>` as the escape hatch)
+- Serve-time image transforms via the Cloudflare Images binding (resize/format from one stored original)
+- Rate limiting for public write routes; presigned direct-to-R2 for large human uploads
+- Durable Object Facets for per-feature state (agent-built apps with their own SQLite)
 
 ## License
 
