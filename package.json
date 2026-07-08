@@ -6,19 +6,24 @@
   "scripts": {
     "deploy": "wrangler deploy",
     "dev": "wrangler dev",
-    "types": "wrangler types"
+    "types": "wrangler types",
+    "typecheck": "tsc --noEmit",
+    "vendor": "node scripts/build-vendor.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.28.0",
     "agent-cms": "^0.4.1",
     "agents": "^0.8.6",
     "graphql": "^16.13.1",
+    "preact": "^10.29.5",
+    "preact-render-to-string": "^6.7.0",
     "sucrase": "^3.35.0",
     "zod": "^3.25.0"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260317.1",
     "esbuild": "^0.25.0",
+    "typescript": "^6.0.3",
     "wrangler": "^4.94.0"
   }
 }
