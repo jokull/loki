@@ -1,0 +1,24 @@
+{
+  "name": "loki",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev",
+    "types": "wrangler types"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.28.0",
+    "agent-cms": "file:../agent-cms",
+    "agents": "^0.8.6",
+    "graphql": "^16.13.1",
+    "sucrase": "^3.35.0",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260317.1",
+    "esbuild": "^0.25.0",
+    "wrangler": "^4.94.0"
+  }
+}
