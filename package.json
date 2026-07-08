@@ -10,7 +10,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.28.0",
-    "agent-cms": "file:../agent-cms",
+    "agent-cms": "^0.4.1",
     "agents": "^0.8.6",
     "graphql": "^16.13.1",
     "sucrase": "^3.35.0",
