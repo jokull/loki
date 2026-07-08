@@ -294,6 +294,79 @@ function escapeHtml(value) {
     .replace(/"/g, "&quot;");
 }
 
+// A head can be authored two ways per route AND once globally (the head export
+// of a top-level app.* module). These helpers merge a global head (defaults)
+// with a route head (overrides), so a favicon/OG set once on the app applies to
+// every page while a route can still override title or a specific tag.
+
+// Open-Graph / Facebook / article meta MUST use property=, not name=. As a
+// convenience, a meta authored as { name: "og:image", ... } is auto-mapped to
+// { property: "og:image", ... } so it emits the correct attribute either way.
+const __PROPERTY_META_RE = /^(og|fb|article|book|profile|music|video):/;
+
+function __normalizeMeta(m) {
+  if (!m || typeof m !== "object") return m;
+  if (
+    m.property == null &&
+    typeof m.name === "string" &&
+    __PROPERTY_META_RE.test(m.name)
+  ) {
+    const out = { property: m.name };
+    for (const k in m) if (k !== "name") out[k] = m[k];
+    return out;
+  }
+  return m;
+}
+
+// Identity used to override/de-dupe. Meta: its property (preferred) or name.
+// Link: rel + href together (so multiple preloads with distinct href survive,
+// while a repeated favicon collapses to one).
+function __metaIdentity(m) {
+  if (!m || typeof m !== "object") return null;
+  if (m.property != null) return "property:" + m.property;
+  if (m.name != null) return "name:" + m.name;
+  return null;
+}
+function __linkIdentity(l) {
+  if (!l || typeof l !== "object") return null;
+  const rel = l.rel != null ? String(l.rel) : "";
+  const href = l.href != null ? String(l.href) : "";
+  if (!rel && !href) return null;
+  return "link:" + rel + "\n" + href;
+}
+
+// Union global + route: route entries override global ones sharing an identity,
+// identity-less entries are kept as-is. Global insertion order is preserved.
+function __mergeList(globalArr, routeArr, idOf) {
+  const g = Array.isArray(globalArr) ? globalArr : [];
+  const r = Array.isArray(routeArr) ? routeArr : [];
+  const byId = new Map();
+  const anon = [];
+  for (const item of g.concat(r)) {
+    const id = idOf(item);
+    if (id == null) anon.push(item);
+    else byId.set(id, item); // route (appended later) overrides global
+  }
+  const out = [];
+  for (const v of byId.values()) out.push(v);
+  for (const v of anon) out.push(v);
+  return out;
+}
+
+// Merge a resolved global head (defaults) under a resolved route head.
+function __mergeHead(globalHead, routeHead) {
+  const g = globalHead && typeof globalHead === "object" ? globalHead : {};
+  const r = routeHead && typeof routeHead === "object" ? routeHead : {};
+  const gMeta = (Array.isArray(g.meta) ? g.meta : []).map(__normalizeMeta);
+  const rMeta = (Array.isArray(r.meta) ? r.meta : []).map(__normalizeMeta);
+  return {
+    // Route title wins if set; else the global (site-wide) title.
+    title: r.title != null ? r.title : g.title,
+    meta: __mergeList(gMeta, rMeta, __metaIdentity),
+    links: __mergeList(g.links, r.links, __linkIdentity),
+  };
+}
+
 function renderHead(head, hasStyles) {
   const parts = [];
   parts.push('<meta charset="utf-8">');
@@ -427,8 +500,14 @@ export async function handleRequest(request, env, ctx, config) {
     if (loaded && typeof loaded === "object") props = loaded;
   }
 
-  let head = mod.head;
-  if (typeof head === "function") head = head(props);
+  let routeHead = mod.head;
+  if (typeof routeHead === "function") routeHead = routeHead(props);
+  let globalHead = config.globalHead;
+  if (typeof globalHead === "function") globalHead = globalHead(props);
+  // Global head provides site-wide defaults (favicon/OG); the route head
+  // overrides title and any tag sharing an identity. De-dupes so a favicon or
+  // og:image set globally + per-route emits once (the route's).
+  const head = __mergeHead(globalHead, routeHead);
 
   // Prime island context, then render synchronously (no await until we've read
   // back whether any island was used) so requests can't clobber each other.

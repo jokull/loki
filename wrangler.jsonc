@@ -20,6 +20,12 @@
       "binding": "LOADER"
     }
   ],
+  "r2_buckets": [
+    {
+      "binding": "ASSETS",
+      "bucket_name": "loki-assets"
+    }
+  ],
   "durable_objects": {
     "bindings": [
       {

@@ -16,7 +16,15 @@ import {
 import type { Env } from "../env";
 import { getCms } from "../env";
 import { buildDraftBundle, smokeRender } from "./serve";
-import { insertVersion, listFiles, readFile, setState } from "./store";
+import {
+  buildDraftAssetManifest,
+  insertVersion,
+  listFiles,
+  readFile,
+  setState,
+  type AssetManifest,
+} from "./store";
+import { assetServingUrl } from "./static-assets";
 
 export interface ExtractedDoc {
   /** Where it came from (file path, optionally with an index for gql templates). */
@@ -218,9 +226,48 @@ export type PublishResult =
         documents: number;
         footprintFields: number;
         rootFields: string[];
+        assets: number;
       };
+      warnings: string[];
     }
   | { ok: false; stage: string; error: string };
+
+/**
+ * Best-effort scan of code sources for `/`-rooted asset references (e.g.
+ * `url(/img/hero.jpg)`, `href="/favicon.ico"`) that map to a public/ file which
+ * isn't in the draft manifest. Returns human-readable warnings — never fails the
+ * publish (mirrors the GraphQL-validation ethos of teaching, not blocking here).
+ */
+function scanMissingAssetRefs(
+  files: { path: string; source: string }[],
+  manifest: AssetManifest,
+): string[] {
+  const served = new Set(Object.keys(manifest).map(assetServingUrl));
+  // Quote/paren-delimited `/path.ext` references. Requires a file extension so
+  // page routes (/about, /posts/x) don't produce noise.
+  const REF = /["'(]\s*(\/[^"'()\s?#]+\.[A-Za-z0-9]+)/g;
+  const missing = new Map<string, Set<string>>();
+  for (const f of files) {
+    if (!/\.(tsx|ts|jsx|mjs|js|css|graphql|html)$/.test(f.path)) continue;
+    let m: RegExpExecArray | null;
+    REF.lastIndex = 0;
+    while ((m = REF.exec(f.source)) !== null) {
+      const ref = m[1];
+      if (ref.startsWith("//")) continue; // protocol-relative
+      if (ref === "/styles.css") continue; // served by the site worker itself
+      if (served.has(ref)) continue;
+      (missing.get(ref) ?? missing.set(ref, new Set()).get(ref)!).add(f.path);
+    }
+  }
+  return [...missing.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(
+      ([ref, where]) =>
+        `${ref} referenced in ${[...where].sort().join(", ")} has no matching ` +
+        `public${ref} asset — add it with site_asset_import/site_asset_write, or ` +
+        `it will 404.`,
+    );
+}
 
 export async function publishSite(
   env: Env,
@@ -289,8 +336,22 @@ export async function publishSite(
     };
   }
 
-  // (e) snapshot + repoint
-  const versionId = await insertVersion(env, message, bundle, footprint);
+  // (e) snapshot the draft asset manifest (blobs already live in R2, so this is
+  // just a path->{hash,contentType,size} map; publish/rollback swap manifests).
+  const assetManifest = await buildDraftAssetManifest(env);
+  const warnings = scanMissingAssetRefs(
+    (await listFiles(env)).map((f) => ({ path: f.path, source: f.source })),
+    assetManifest,
+  );
+
+  // (f) snapshot + repoint
+  const versionId = await insertVersion(
+    env,
+    message,
+    bundle,
+    footprint,
+    assetManifest,
+  );
   await setState(env, "published_version", String(versionId));
 
   return {
@@ -300,6 +361,8 @@ export async function publishSite(
       documents: docs.length,
       footprintFields: footprint.fields.length,
       rootFields: footprint.rootFields,
+      assets: Object.keys(assetManifest).length,
     },
+    warnings,
   };
 }

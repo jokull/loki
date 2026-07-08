@@ -18,7 +18,7 @@ export type Bundle = Record<string, string>;
 
 // Bump when the runtime shim, vendor modules, or bundle builder change — it is
 // mixed into every LOADER id so cached isolates are invalidated.
-export const RUNTIME_VERSION = "r7";
+export const RUNTIME_VERSION = "r8";
 
 const ENTRY_NAME = "__loki_entry.js";
 const COMPAT_DATE = "2026-07-01";
@@ -84,6 +84,12 @@ function isRoute(path: string): boolean {
 
 function isMainOverride(path: string): boolean {
   return /^main\.(tsx|ts|jsx|mjs|js)$/.test(path);
+}
+
+// A top-level `app.*` module is the site root: its `head` export is the GLOBAL
+// head merged under every route (favicon / OG / site-wide meta live here once).
+function isAppModule(path: string): boolean {
+  return /^app\.(tsx|ts|jsx|mjs|js)$/.test(path);
 }
 
 /** Sort so static routes match before parameterised ones. */
@@ -170,6 +176,11 @@ export function buildWorkerCode(bundle: Bundle): BuiltWorker {
     )
     .join("\n");
 
+  // Global head: the `head` export of a top-level `app.*` module, if present.
+  const appModule = Object.keys(bundle).find(isAppModule);
+  const globalHeadExpr =
+    appModule != null ? `__m${indexOf.get(appModule)}.head` : "undefined";
+
   const vendorBase = "/__vendor/" + RUNTIME_VERSION;
   const entry = `
 import * as __runtime from "./loki_runtime.js";
@@ -188,6 +199,7 @@ export default {
       styles: __styles,
       islands: __islands,
       vendorBase: ${JSON.stringify(vendorBase)},
+      globalHead: ${globalHeadExpr},
     });
   },
 };

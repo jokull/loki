@@ -4,20 +4,62 @@ import { z } from "zod";
 import type { Env } from "../env";
 import { getCms } from "../env";
 import {
+  buildDraftAssetManifest,
+  deleteAsset,
   deleteFile,
   getPublishedVersionId,
   getVersion,
+  listAssets,
   listFiles,
   listVersions,
+  readAsset,
   readFile,
   setState,
+  versionAssetManifest,
   writeFile,
+  type AssetManifest,
 } from "./store";
 import { transpileModule } from "./transpile";
 import { buildDraftBundle } from "./serve";
 import { publishSite } from "./publish";
 import { SITE_HELP } from "./help";
 import type { Bundle } from "./bundle";
+import {
+  assetServingUrl,
+  checkAssetPath,
+  inferContentType,
+  MAX_INLINE_BYTES,
+  OCTET_STREAM,
+  storeAsset,
+} from "./static-assets";
+
+const PUBLIC_PREFIX = "public/";
+
+function jsonText(value: unknown): SiteToolResult {
+  return text(JSON.stringify(value, null, 2));
+}
+
+/** Decode base64 (tolerating an optional data: URL prefix and whitespace). */
+function decodeBase64(input: string): Uint8Array {
+  const comma = input.indexOf(",");
+  const body =
+    input.startsWith("data:") && comma !== -1 ? input.slice(comma + 1) : input;
+  const clean = body.replace(/\s+/g, "");
+  const binary = atob(clean);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+/** Prefer a concrete response Content-Type; else infer from the path. */
+function resolveContentType(
+  headerValue: string | null,
+  path: string,
+): string {
+  const media = headerValue?.split(";")[0]?.trim().toLowerCase() ?? "";
+  if (media && media !== "application/octet-stream") return media;
+  return inferContentType(path);
+}
 
 const SITE_ORIGIN = "https://loki.solberg.workers.dev";
 
@@ -95,10 +137,125 @@ export const SITE_TOOLS: SiteTool[] = [
     },
   },
   {
+    name: "site_asset_import",
+    description:
+      "Import a static/design asset by URL. Loki (which has network access) " +
+      "fetches the URL, stores the bytes content-addressed in R2, and records a " +
+      "DRAFT asset entry. Path MUST start with `public/` and serves at the site " +
+      "root (public/img/hero.jpg -> /img/hero.jpg). Returns JSON " +
+      "{ path, url, hash, size, contentType } where `url` is the EXACT string to " +
+      "paste into markup/CSS. Prefer this over site_asset_write for anything but " +
+      "tiny files. Assets version/preview/rollback exactly like code — publish to " +
+      "go live.",
+    inputSchema: {
+      path: z
+        .string()
+        .describe("public/… path, e.g. public/img/hero.jpg (serves at /img/hero.jpg)"),
+      url: z.string().describe("Source URL to fetch (http/https)"),
+    },
+    async handler({ path, url }, { env }) {
+      const check = checkAssetPath(path);
+      if (!check.ok) return errorResult(check.error!);
+      if (!/^https?:\/\//i.test(url)) {
+        return errorResult("url must be an http(s) URL.");
+      }
+      let res: Response;
+      try {
+        res = await fetch(url, { redirect: "follow" });
+      } catch (err) {
+        return errorResult(
+          `Failed to fetch ${url}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+      if (!res.ok) {
+        return errorResult(`Fetch of ${url} returned HTTP ${res.status}.`);
+      }
+      const bytes = new Uint8Array(await res.arrayBuffer());
+      if (bytes.length === 0) return errorResult(`${url} returned an empty body.`);
+      const contentType = resolveContentType(res.headers.get("content-type"), path);
+      const stored = await storeAsset(env, path, bytes, contentType);
+      return jsonText(stored);
+    },
+  },
+  {
+    name: "site_asset_write",
+    description:
+      "Write a small static asset from base64 bytes (favicon, SVG, etc). Path " +
+      "MUST start with `public/` and serves at the site root " +
+      "(public/favicon.ico -> /favicon.ico). Size cap ~2 MB — larger files are " +
+      "rejected with a pointer to site_asset_import. contentType is inferred from " +
+      "the extension if omitted. Returns JSON { path, url, hash, size, contentType }; " +
+      "`url` is the exact string to reference. Records a DRAFT entry — publish to " +
+      "go live.",
+    inputSchema: {
+      path: z
+        .string()
+        .describe("public/… path, e.g. public/favicon.ico (serves at /favicon.ico)"),
+      base64: z
+        .string()
+        .describe("File bytes as base64 (a data: URL prefix is tolerated)"),
+      contentType: z
+        .string()
+        .optional()
+        .describe("MIME type; inferred from the extension if omitted"),
+    },
+    async handler({ path, base64, contentType }, { env }) {
+      const check = checkAssetPath(path);
+      if (!check.ok) return errorResult(check.error!);
+      let bytes: Uint8Array;
+      try {
+        bytes = decodeBase64(base64);
+      } catch {
+        return errorResult("base64 is not valid base64 data.");
+      }
+      if (bytes.length === 0) return errorResult("Decoded body is empty.");
+      if (bytes.length > MAX_INLINE_BYTES) {
+        return errorResult(
+          `Decoded file is ${bytes.length} bytes, over the ~${Math.round(
+            MAX_INLINE_BYTES / (1024 * 1024),
+          )} MB site_asset_write cap. Use site_asset_import({ path, url }) instead.`,
+        );
+      }
+      const explicit = contentType && contentType.trim();
+      const ct = explicit ? contentType.trim() : inferContentType(path);
+      const stored = await storeAsset(env, path, bytes, ct);
+      // If we had to fall back to octet-stream from the extension, flag it so the
+      // agent knows to pass an explicit contentType (browsers won't render it).
+      if (!explicit && ct === OCTET_STREAM) {
+        return jsonText({
+          ...stored,
+          contentTypeInferred: false,
+          note:
+            `Content-Type could not be inferred from the extension of "${path}" — ` +
+            `stored as ${OCTET_STREAM}. Re-run site_asset_write with an explicit ` +
+            `contentType (e.g. "text/plain; charset=utf-8") so it serves correctly.`,
+        });
+      }
+      return jsonText({ ...stored, contentTypeInferred: !explicit });
+    },
+  },
+  {
     name: "site_read",
-    description: "Read a site file's source from the draft tree.",
+    description:
+      "Read a site file's source from the draft tree. For a binary asset " +
+      "(public/… path) this returns JSON metadata (hash, size, contentType, " +
+      "serving url) — NOT the raw bytes.",
     inputSchema: { path: z.string() },
     async handler({ path }, { env }) {
+      if (path.startsWith(PUBLIC_PREFIX)) {
+        const asset = await readAsset(env, path);
+        if (!asset) return errorResult(`No such asset: ${path}`);
+        return jsonText({
+          path: asset.path,
+          kind: "asset",
+          url: assetServingUrl(asset.path),
+          hash: asset.hash,
+          size: asset.size,
+          contentType: asset.content_type,
+          updated_at: asset.updated_at,
+          note: "Binary asset — bytes are served at `url`, not returned here.",
+        });
+      }
       const file = await readFile(env, path);
       if (!file) return errorResult(`No such file: ${path}`);
       return text(file.source);
@@ -106,22 +263,52 @@ export const SITE_TOOLS: SiteTool[] = [
   },
   {
     name: "site_list",
-    description: "List all files in the draft tree with sizes and update times.",
+    description:
+      "List the draft tree: code files (with sizes/update times) AND static " +
+      "assets (marked, with size/contentType/serving url).",
     inputSchema: {},
     async handler(_args, { env }) {
       const files = await listFiles(env);
-      if (files.length === 0) return text("(draft tree is empty)");
-      const lines = files.map(
-        (f) => `${f.path}  (${f.source.length}b, ${f.updated_at})`,
-      );
-      return text(lines.join("\n"));
+      const assets = await listAssets(env);
+      if (files.length === 0 && assets.length === 0) {
+        return text("(draft tree is empty)");
+      }
+      const sections: string[] = [];
+      if (files.length) {
+        sections.push(
+          "Code files:\n" +
+            files
+              .map((f) => `  ${f.path}  (${f.source.length}b, ${f.updated_at})`)
+              .join("\n"),
+        );
+      }
+      if (assets.length) {
+        sections.push(
+          "Assets (public/… -> served at site root):\n" +
+            assets
+              .map(
+                (a) =>
+                  `  ${a.path} -> ${assetServingUrl(a.path)}  ` +
+                  `(${a.content_type}, ${a.size}b, ${a.updated_at})`,
+              )
+              .join("\n"),
+        );
+      }
+      return text(sections.join("\n\n"));
     },
   },
   {
     name: "site_delete",
-    description: "Delete a file from the draft tree.",
+    description:
+      "Delete a file or asset from the draft tree (public/… paths delete the asset entry).",
     inputSchema: { path: z.string() },
     async handler({ path }, { env }) {
+      if (path.startsWith(PUBLIC_PREFIX)) {
+        const ok = await deleteAsset(env, path);
+        return ok
+          ? text(`Deleted asset ${path}.`)
+          : errorResult(`No such asset: ${path}`);
+      }
       const ok = await deleteFile(env, path);
       return ok ? text(`Deleted ${path}.`) : errorResult(`No such file: ${path}`);
     },
@@ -133,11 +320,16 @@ export const SITE_TOOLS: SiteTool[] = [
     inputSchema: {},
     async handler(_args, { env }) {
       const draft = await buildDraftBundle(env);
+      const draftAssets = await buildDraftAssetManifest(env);
       const versionId = await getPublishedVersionId(env);
       let published: Bundle = {};
+      let publishedAssets: AssetManifest = {};
       if (versionId != null) {
         const v = await getVersion(env, versionId);
-        if (v) published = JSON.parse(v.bundle) as Bundle;
+        if (v) {
+          published = JSON.parse(v.bundle) as Bundle;
+          publishedAssets = versionAssetManifest(v);
+        }
       }
       const added: string[] = [];
       const removed: string[] = [];
@@ -149,6 +341,17 @@ export const SITE_TOOLS: SiteTool[] = [
       for (const p of Object.keys(published)) {
         if (!(p in draft)) removed.push(p);
       }
+      // Assets compared by content hash (distinct from code).
+      const aAdded: string[] = [];
+      const aRemoved: string[] = [];
+      const aChanged: string[] = [];
+      for (const p of Object.keys(draftAssets)) {
+        if (!(p in publishedAssets)) aAdded.push(p);
+        else if (publishedAssets[p].hash !== draftAssets[p].hash) aChanged.push(p);
+      }
+      for (const p of Object.keys(publishedAssets)) {
+        if (!(p in draftAssets)) aRemoved.push(p);
+      }
       const fmt = (label: string, arr: string[]) =>
         `${label} (${arr.length}):${arr.length ? "\n  " + arr.sort().join("\n  ") : " none"}`;
       const base =
@@ -157,9 +360,14 @@ export const SITE_TOOLS: SiteTool[] = [
           : `Comparing draft vs published v${versionId}.\n`;
       return text(
         base +
-          [fmt("Added", added), fmt("Changed", changed), fmt("Removed", removed)].join(
-            "\n",
-          ),
+          "Code:\n" +
+          [fmt("Added", added), fmt("Changed", changed), fmt("Removed", removed)]
+            .map((l) => "  " + l.replace(/\n/g, "\n  "))
+            .join("\n") +
+          "\nAssets:\n" +
+          [fmt("Added", aAdded), fmt("Changed", aChanged), fmt("Removed", aRemoved)]
+            .map((l) => "  " + l.replace(/\n/g, "\n  "))
+            .join("\n"),
       );
     },
   },
@@ -203,12 +411,16 @@ export const SITE_TOOLS: SiteTool[] = [
       if (!result.ok) {
         return errorResult(`Publish failed at ${result.stage}:\n${result.error}`);
       }
+      const warnBlock = result.warnings.length
+        ? `\nWarnings (non-fatal):\n  - ${result.warnings.join("\n  - ")}`
+        : "";
       return text(
         `Published v${result.versionId}.\n` +
           `- GraphQL documents validated: ${result.validated.documents}\n` +
           `- Footprint (Type.field) pairs: ${result.validated.footprintFields}\n` +
           `- Root fields used: ${result.validated.rootFields.join(", ") || "(none)"}\n` +
-          `The live site now serves v${result.versionId}.`,
+          `- Static assets snapshotted: ${result.validated.assets}\n` +
+          `The live site now serves v${result.versionId}.${warnBlock}`,
       );
     },
   },

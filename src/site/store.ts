@@ -16,7 +16,26 @@ export interface SiteVersion {
   message: string | null;
   bundle: string; // JSON: { [path]: compiledModule }
   footprint: string | null; // JSON footprint
+  assets: string | null; // JSON asset manifest: { [path]: AssetManifestEntry }
 }
+
+/** Draft asset row (site_assets). `path` always starts with `public/`. */
+export interface SiteAsset {
+  path: string;
+  hash: string;
+  content_type: string;
+  size: number;
+  updated_at: string;
+}
+
+/** One entry in a published asset manifest (site_versions.assets JSON). */
+export interface AssetManifestEntry {
+  hash: string;
+  contentType: string;
+  size: number;
+}
+
+export type AssetManifest = Record<string, AssetManifestEntry>;
 
 // ---- site_files (draft tree) -------------------------------------------------
 
@@ -67,11 +86,17 @@ export async function insertVersion(
   message: string | null,
   bundle: Record<string, string>,
   footprint: unknown,
+  assets: AssetManifest,
 ): Promise<number> {
   const res = await env.DB.prepare(
-    "INSERT INTO site_versions (message, bundle, footprint) VALUES (?, ?, ?)",
+    "INSERT INTO site_versions (message, bundle, footprint, assets) VALUES (?, ?, ?, ?)",
   )
-    .bind(message, JSON.stringify(bundle), JSON.stringify(footprint))
+    .bind(
+      message,
+      JSON.stringify(bundle),
+      JSON.stringify(footprint),
+      JSON.stringify(assets),
+    )
     .run();
   return Number(res.meta.last_row_id);
 }
@@ -81,10 +106,21 @@ export async function getVersion(
   id: number,
 ): Promise<SiteVersion | null> {
   return await env.DB.prepare(
-    "SELECT id, created_at, message, bundle, footprint FROM site_versions WHERE id = ?",
+    "SELECT id, created_at, message, bundle, footprint, assets FROM site_versions WHERE id = ?",
   )
     .bind(id)
     .first<SiteVersion>();
+}
+
+/** Parse a version row's snapshotted asset manifest (empty on legacy rows). */
+export function versionAssetManifest(version: SiteVersion): AssetManifest {
+  if (!version.assets) return {};
+  try {
+    const parsed = JSON.parse(version.assets) as AssetManifest;
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
 }
 
 export async function listVersions(
@@ -94,6 +130,67 @@ export async function listVersions(
     "SELECT id, created_at, message, footprint FROM site_versions ORDER BY id DESC",
   ).all<Omit<SiteVersion, "bundle">>();
   return results ?? [];
+}
+
+// ---- site_assets (draft asset tree) -----------------------------------------
+
+export async function listAssets(env: Env): Promise<SiteAsset[]> {
+  const { results } = await env.DB.prepare(
+    "SELECT path, hash, content_type, size, updated_at FROM site_assets ORDER BY path",
+  ).all<SiteAsset>();
+  return results ?? [];
+}
+
+export async function readAsset(
+  env: Env,
+  path: string,
+): Promise<SiteAsset | null> {
+  return await env.DB.prepare(
+    "SELECT path, hash, content_type, size, updated_at FROM site_assets WHERE path = ?",
+  )
+    .bind(path)
+    .first<SiteAsset>();
+}
+
+export async function upsertAsset(
+  env: Env,
+  path: string,
+  hash: string,
+  contentType: string,
+  size: number,
+): Promise<void> {
+  await env.DB.prepare(
+    `INSERT INTO site_assets (path, hash, content_type, size, updated_at)
+     VALUES (?, ?, ?, ?, datetime('now'))
+     ON CONFLICT(path) DO UPDATE SET
+       hash = excluded.hash,
+       content_type = excluded.content_type,
+       size = excluded.size,
+       updated_at = excluded.updated_at`,
+  )
+    .bind(path, hash, contentType, size)
+    .run();
+}
+
+export async function deleteAsset(env: Env, path: string): Promise<boolean> {
+  const res = await env.DB.prepare("DELETE FROM site_assets WHERE path = ?")
+    .bind(path)
+    .run();
+  return (res.meta?.changes ?? 0) > 0;
+}
+
+/** Build the draft asset manifest (path -> {hash,contentType,size}). */
+export async function buildDraftAssetManifest(env: Env): Promise<AssetManifest> {
+  const rows = await listAssets(env);
+  const manifest: AssetManifest = {};
+  for (const r of rows) {
+    manifest[r.path] = {
+      hash: r.hash,
+      contentType: r.content_type,
+      size: r.size,
+    };
+  }
+  return manifest;
 }
 
 // ---- site_state (key/value) --------------------------------------------------
