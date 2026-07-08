@@ -29,6 +29,7 @@ import {
   checkAssetPath,
   inferContentType,
   MAX_INLINE_BYTES,
+  OCTET_STREAM,
   storeAsset,
 } from "./static-assets";
 
@@ -215,12 +216,22 @@ export const SITE_TOOLS: SiteTool[] = [
           )} MB site_asset_write cap. Use site_asset_import({ path, url }) instead.`,
         );
       }
-      const ct =
-        contentType && contentType.trim()
-          ? contentType.trim()
-          : inferContentType(path);
+      const explicit = contentType && contentType.trim();
+      const ct = explicit ? contentType.trim() : inferContentType(path);
       const stored = await storeAsset(env, path, bytes, ct);
-      return jsonText(stored);
+      // If we had to fall back to octet-stream from the extension, flag it so the
+      // agent knows to pass an explicit contentType (browsers won't render it).
+      if (!explicit && ct === OCTET_STREAM) {
+        return jsonText({
+          ...stored,
+          contentTypeInferred: false,
+          note:
+            `Content-Type could not be inferred from the extension of "${path}" — ` +
+            `stored as ${OCTET_STREAM}. Re-run site_asset_write with an explicit ` +
+            `contentType (e.g. "text/plain; charset=utf-8") so it serves correctly.`,
+        });
+      }
+      return jsonText({ ...stored, contentTypeInferred: !explicit });
     },
   },
   {

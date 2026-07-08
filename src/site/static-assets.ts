@@ -65,6 +65,9 @@ const CONTENT_TYPES: Record<string, string> = {
   mjs: "text/javascript; charset=utf-8",
   json: "application/json; charset=utf-8",
   txt: "text/plain; charset=utf-8",
+  md: "text/markdown; charset=utf-8",
+  markdown: "text/markdown; charset=utf-8",
+  csv: "text/csv; charset=utf-8",
   xml: "application/xml; charset=utf-8",
   pdf: "application/pdf",
   woff: "font/woff",
@@ -82,10 +85,13 @@ const CONTENT_TYPES: Record<string, string> = {
   webmanifest: "application/manifest+json",
 };
 
+/** Generic fallback when no extension mapping applies. */
+export const OCTET_STREAM = "application/octet-stream";
+
 /** Infer a Content-Type from a path's extension (octet-stream fallback). */
 export function inferContentType(path: string): string {
   const ext = path.split(".").pop()?.toLowerCase() ?? "";
-  return CONTENT_TYPES[ext] ?? "application/octet-stream";
+  return CONTENT_TYPES[ext] ?? OCTET_STREAM;
 }
 
 /** The exact URL a `public/…` asset serves at (root-mapped). */
