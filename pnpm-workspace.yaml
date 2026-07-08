@@ -6,4 +6,4 @@ allowBuilds:
   sharp: set this to true or false
   workerd: set this to true or false
 minimumReleaseAgeExclude:
-  - agent-cms@0.4.1
+  - agent-cms@0.4.1 || 0.4.2
