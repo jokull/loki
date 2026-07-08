@@ -5,6 +5,13 @@ export interface Env {
   LOADER: WorkerLoader;
   /** Durable Object namespace backing realtime channels (see src/realtime.ts). */
   CHANNELS: DurableObjectNamespace<import("./realtime").ChannelDO>;
+  /**
+   * R2 bucket (`loki-assets`) shared by two independent concerns:
+   * - agent-cms content assets (keyed under `uploads/…` by agent-cms itself);
+   * - Loki site static/design assets (keyed under `site/blob/<sha256>`, see
+   *   src/site/static-assets.ts). The two prefixes never collide.
+   */
+  ASSETS: R2Bucket;
   WRITE_KEY?: string;
   ENVIRONMENT?: "production" | "development";
 }
@@ -29,6 +36,11 @@ export function getCms(env: Env, origin = "https://loki.solberg.workers.dev"): C
       environment: env.ENVIRONMENT === "development" ? "development" : "production",
       writeKey: env.WRITE_KEY,
       siteUrl: origin,
+      // agent-cms content-asset store. It keys objects under `uploads/…` and
+      // serves them at `/assets/:id/:filename` (forwarded to cms.fetch). The
+      // public base it stamps onto media URLs is `<assetBaseUrl>/uploads/…`.
+      assets: env.ASSETS,
+      assetBaseUrl: origin,
     };
   }
   return createCMSHandler({ bindings: cachedBindings });

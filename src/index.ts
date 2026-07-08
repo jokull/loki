@@ -62,6 +62,40 @@ function isCmsPath(pathname: string): boolean {
 }
 
 /**
+ * Serve an agent-cms content asset straight from R2 by object key.
+ *
+ * agent-cms keys content assets under `uploads/<id>/<filename>` and stamps that
+ * exact key onto the public URLs it returns (`<assetBaseUrl>/uploads/…`, driven
+ * by our `assetBaseUrl = origin`). agent-cms's own worker only serves the SQL-
+ * backed `/assets/:id` route, so this passthrough makes those stamped
+ * `/uploads/…` URLs resolve. Keys are content-stable per id, hence immutable.
+ * (Distinct from Loki's SITE static assets under `site/blob/…`; see
+ * src/site/static-assets.ts.)
+ */
+async function serveCmsUpload(request: Request, env: Env): Promise<Response> {
+  const method = request.method.toUpperCase();
+  if (method !== "GET" && method !== "HEAD") {
+    return new Response("Method Not Allowed", {
+      status: 405,
+      headers: { allow: "GET, HEAD" },
+    });
+  }
+  const key = new URL(request.url).pathname.slice(1); // drop leading "/"
+  const object = await env.ASSETS.get(key);
+  if (!object) return new Response("Not found", { status: 404 });
+  const headers = new Headers({
+    "content-type": object.httpMetadata?.contentType || "application/octet-stream",
+    "cache-control": "public, max-age=31536000, immutable",
+    etag: object.httpEtag,
+  });
+  if (method === "HEAD") {
+    await object.arrayBuffer().catch(() => undefined);
+    return new Response(null, { status: 200, headers });
+  }
+  return new Response(object.body, { status: 200, headers });
+}
+
+/**
  * Forward an `/api/models/...` request to agent-cms, running the migration
  * guard first for destructive schema ops (DELETE model/field, breaking PATCH).
  * On veto, returns 409 JSON carrying the same instructive reason the MCP seam
@@ -125,6 +159,11 @@ export default {
     // Loki's merged MCP endpoint (agent-cms's own /mcp stays internal).
     if (pathname === "/mcp") {
       return handleMcp(request, env, ctx);
+    }
+
+    // agent-cms content-asset bytes, addressed by their R2 key (`uploads/…`).
+    if (pathname.startsWith("/uploads/")) {
+      return serveCmsUpload(request, env);
     }
 
     if (isCmsPath(pathname)) {
