@@ -18,7 +18,7 @@ export type Bundle = Record<string, string>;
 
 // Bump when the runtime shim, vendor modules, or bundle builder change — it is
 // mixed into every LOADER id so cached isolates are invalidated.
-export const RUNTIME_VERSION = "r5";
+export const RUNTIME_VERSION = "r7";
 
 const ENTRY_NAME = "__loki_entry.js";
 const COMPAT_DATE = "2026-07-01";
@@ -135,8 +135,28 @@ export function buildWorkerCode(bundle: Bundle): BuiltWorker {
     return { compatibilityDate: COMPAT_DATE, mainModule: ENTRY_NAME, modules };
   }
 
-  // File-based routing: generate a root entry that imports each route module.
-  const routes = Object.keys(bundle)
+  // File-based routing: generate a root entry that imports EVERY authored
+  // module (routes + components + utils) once. Route modules populate the router
+  // table; all modules populate the island registry so <Island src="..."> can
+  // resolve a component synchronously during SSR (renderToString is sync, so a
+  // dynamic import is not an option).
+  const authored = Object.keys(bundle).filter(isTranspilable);
+  const indexOf = new Map(authored.map((p, i) => [p, i]));
+
+  const imports = authored
+    .map((path, i) => `import * as __m${i} from ${JSON.stringify("./" + path)};`)
+    .join("\n");
+
+  const registry = authored
+    .map((path, i) => {
+      const alias = stripExt(path);
+      const lines = [`  ${JSON.stringify(path)}: __m${i},`];
+      if (alias !== path) lines.push(`  ${JSON.stringify(alias)}: __m${i},`);
+      return lines.join("\n");
+    })
+    .join("\n");
+
+  const routes = authored
     .filter(isRoute)
     .map((path) => ({ path, pattern: routePathToPattern(path) }))
     .sort((a, b) => {
@@ -144,14 +164,13 @@ export function buildWorkerCode(bundle: Bundle): BuiltWorker {
       const [pb, nb] = routeSpecificity(b.pattern);
       return pa - pb || na - nb;
     });
-
-  const imports = routes
-    .map((r, i) => `import * as __r${i} from ${JSON.stringify("./" + r.path)};`)
-    .join("\n");
   const table = routes
-    .map((r, i) => `  { pattern: ${JSON.stringify(r.pattern)}, mod: __r${i} },`)
+    .map(
+      (r) => `  { pattern: ${JSON.stringify(r.pattern)}, mod: __m${indexOf.get(r.path)} },`,
+    )
     .join("\n");
 
+  const vendorBase = "/__vendor/" + RUNTIME_VERSION;
   const entry = `
 import * as __runtime from "./loki_runtime.js";
 ${imports}
@@ -159,9 +178,17 @@ const __styles = ${JSON.stringify(styles)};
 const __routes = [
 ${table}
 ];
+const __islands = {
+${registry}
+};
 export default {
   fetch(request, env, ctx) {
-    return __runtime.handleRequest(request, env, ctx, { routes: __routes, styles: __styles });
+    return __runtime.handleRequest(request, env, ctx, {
+      routes: __routes,
+      styles: __styles,
+      islands: __islands,
+      vendorBase: ${JSON.stringify(vendorBase)},
+    });
   },
 };
 `;

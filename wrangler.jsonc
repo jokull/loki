@@ -19,5 +19,19 @@
     {
       "binding": "LOADER"
     }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "CHANNELS",
+        "class_name": "ChannelDO"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["ChannelDO"]
+    }
   ]
 }
