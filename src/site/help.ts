@@ -20,8 +20,34 @@ publish an immutable version. Content comes from the CMS via GraphQL.
 
 Each route module default-exports a Preact component. Optionally export:
 - \`loader({ env, params, request })\` -> returns props (may be async; runs on the server).
-- \`head\` -> an object \`{ title, meta: [{name, content}], links: [{rel, href}] }\`,
-  or a function \`(props) => head\`.
+- \`head\` -> an object \`{ title, meta: [...], links: [{rel, href}] }\`, or a
+  function \`(props) => head\`. Each \`meta\` item is EITHER \`{ name, content }\`
+  (standard meta) OR \`{ property, content }\` (Open-Graph / Facebook — e.g.
+  \`{ property: "og:image", content: "/og.png" }\`). A meta given as
+  \`{ name: "og:..." }\` (or \`fb:\`/\`article:\`) is auto-mapped to \`property\` for you.
+
+### Global head (site-wide favicon / OG / meta)
+
+Set a favicon, default OG tags, or any site-wide \`<head>\` bits ONCE by exporting
+\`head\` from a top-level \`app.tsx\` (or app.ts/js). It has the SAME shape as a route
+head (object or \`(props) => head\`) and is merged UNDER every page:
+
+- \`title\`: the route's wins if it sets one, else the global title.
+- \`meta\` / \`links\`: unioned. A route entry OVERRIDES a global one with the same
+  identity — meta by its \`name\`/\`property\`, links by \`rel\`+\`href\` — and duplicates
+  are collapsed, so you never emit two favicons or two \`og:image\` tags.
+
+    // app.tsx — applies to every route
+    export const head = {
+      links: [{ rel: "icon", href: "/favicon.ico" }],
+      meta: [
+        { property: "og:image", content: "/og.png" },
+        { property: "og:site_name", content: "My Site" },
+      ],
+    };
+
+A route that sets its own \`head\` still works: it keeps the global favicon while
+overriding \`title\` and any tag it re-declares (e.g. a page-specific \`og:image\`).
 - \`action({ request, env, params })\` -> handles NON-GET requests to this route
   (POST/PUT/PATCH/DELETE) — see "Route actions" below.
 
@@ -285,7 +311,10 @@ paste into markup/CSS** (already root-mapped — do NOT prefix it with \`public/
 - \`site_asset_write({ path, base64, contentType? })\` — decode base64 bytes.
   For SMALL files only (favicon, inline SVG); ~2 MB cap, over which it errors and
   tells you to use site_asset_import. \`contentType\` is inferred from the
-  extension if omitted.
+  extension if omitted (common web/text/font types are known, incl. \`.svg\`,
+  \`.json\`, \`.md\`, \`.txt\`, \`.csv\`, \`.xml\`, \`.webmanifest\`, \`.woff2\`). If the
+  extension is unknown the result carries \`contentTypeInferred: false\` + a \`note\`
+  — pass an explicit \`contentType\` in that case.
 
 Assets are DRAFT until you publish, and they version / preview / rollback exactly
 like code: preview shows the draft manifest (no-store), the published site serves
@@ -320,13 +349,21 @@ these site files.)
     site_asset_import({ path: "public/files/brochure.pdf", url: "https://example.com/brochure.pdf" })
     // -> { "url": "/files/brochure.pdf", … }
 
-Reference the returned \`url\` strings verbatim:
+Reference the returned \`url\` strings verbatim. Set the favicon + a default
+og-image ONCE in \`app.tsx\` (global head) so every route inherits them:
 
-    // routes/index.tsx — favicon + og-image in <head>
+    // app.tsx — site-wide head (favicon + default OG), merged under every page
+    export const head = {
+      links: [{ rel: "icon", href: "/favicon.ico" }],
+      meta: [{ property: "og:image", content: "/og.png" }],
+    };
+
+A route only needs a \`head\` to override — e.g. its own title or og:image:
+
+    // routes/index.tsx — favicon + default og:image come from app.tsx
     export const head = {
       title: "Home",
-      links: [{ rel: "icon", href: "/favicon.ico" }],
-      meta: [{ name: "og:image", content: "/og.png" }],
+      // meta: [{ property: "og:image", content: "/og-home.png" }], // page override
     };
     export default function Home() {
       return (
