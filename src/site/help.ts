@@ -29,8 +29,9 @@ The component receives \`{ ...loaderProps, params }\`.
 
 - \`preact\`, \`preact/hooks\`, \`preact/jsx-runtime\` (JSX is auto-configured for preact).
 - \`preact-render-to-string\` (rendering is handled for you; rarely needed directly).
-- \`loki/runtime\` -> \`gql\` (tag GraphQL documents) and \`query(env, document, variables)\`
-  (runs a GraphQL query against the CMS; drafts are visible in preview mode).
+- \`loki/runtime\` -> \`gql\` (tag GraphQL documents), \`query(env, document, variables)\`
+  (runs a GraphQL query against the CMS; drafts are visible in preview mode), and
+  \`renderStructuredText(value)\` (renders a Structured Text DAST value to Preact vnodes).
 - Relative imports between your own files must include the extension, e.g.
   \`import { Layout } from "./components/layout.tsx"\`.
 
@@ -39,20 +40,28 @@ isolated worker with no outbound fetch except the GraphQL binding.
 
 ## Example: routes/posts/[slug].tsx
 
-    import { gql, query } from "loki/runtime";
+The CMS schema is DatoCMS-style: singular record fields take a \`filter\`, and
+Structured Text fields expose \`{ value, blocks, inlineBlocks, links }\` — there is
+NO pre-rendered \`bodyHtml\`. Query \`body { value }\` (the DAST JSON) and render it
+with \`renderStructuredText\`. (Explore the exact fields first with the
+\`graphql_query\` MCP tool — introspection is allowed.)
+
+    import { gql, query, renderStructuredText } from "loki/runtime";
 
     const POST = gql\`
       query Post($slug: String!) {
-        post(filter: { slug: { eq: $slug } }) {
+        blogPost(filter: { slug: { eq: $slug } }) {
           title
-          bodyHtml
+          body {
+            value
+          }
         }
       }
     \`;
 
     export async function loader({ env, params }) {
       const data = await query(env, POST, { slug: params.slug });
-      return { post: data.post };
+      return { post: data.blogPost };
     }
 
     export const head = (props) => ({ title: props.post?.title ?? "Post" });
@@ -62,7 +71,7 @@ isolated worker with no outbound fetch except the GraphQL binding.
       return (
         <main class="post">
           <h1>{post.title}</h1>
-          <div dangerouslySetInnerHTML={{ __html: post.bodyHtml }} />
+          <div class="body">{renderStructuredText(post.body?.value)}</div>
         </main>
       );
     }
@@ -73,6 +82,14 @@ isolated worker with no outbound fetch except the GraphQL binding.
 
 ## GraphQL notes
 
+- Prototype queries with the \`graphql_query\` MCP tool before wiring them into a
+  route: \`graphql_query({ query, variables?, includeDrafts? })\` runs against the
+  live schema and returns \`{ data, errors }\`. Introspection is allowed, so you can
+  discover the exact model and field names first.
+- Naming is DatoCMS-style: collections are pluralised (\`allBlogPosts\`), single
+  records are singular with a \`filter\` (\`blogPost(filter: { slug: { eq: $slug } })\`),
+  and record types are \`...Record\` (\`BlogPostRecord\`). Structured Text fields expose
+  \`{ value, blocks, inlineBlocks, links }\`; render \`value\` with \`renderStructuredText\`.
 - Tag every query with \`gql\` (or put it in a \`.graphql\` file). At publish, ALL
   documents are validated against the live CMS schema — unknown fields/types fail
   the publish with per-document errors.
@@ -91,5 +108,20 @@ isolated worker with no outbound fetch except the GraphQL binding.
 3. publish_site("message")                 -> validates + smoke-renders + snapshots
 4. rollback_site(versionId) / site_versions() as needed
 
-Other tools: site_read(path), site_list(), site_delete(path), site_diff()
+## Previewing without a browser
+
+\`preview_site\` returns a \`/__preview?token=...\` URL. It sets an HttpOnly cookie
+named \`loki_preview\` (Path=/, Max-Age=1800, SameSite=Lax) and 302-redirects to /.
+For non-browser clients use a cookie jar:
+
+    curl -sc jar "<preview_url>" -o /dev/null      # step 1: capture loki_preview cookie
+    curl -sb jar "<origin>/posts/my-post"          # step 2: draft HTML, reusing the jar
+
+The token is valid for 30 minutes and is tied to that window, NOT to the draft
+contents. After further site_write edits, DO NOT mint a new token — just re-request
+the path with the same jar; the draft tree is rebuilt on every request. Only call
+preview_site again once the 30-minute token has expired.
+
+Other tools: graphql_query({query, variables?, includeDrafts?}) (explore the content
+API / introspection), site_read(path), site_list(), site_delete(path), site_diff()
 (shows added/removed/changed paths vs the published version).`;

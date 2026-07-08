@@ -44,6 +44,82 @@ export async function query(env, document, variables) {
 
 export { h, Fragment, renderToString };
 
+// ---- structured text --------------------------------------------------------
+
+// Render a DatoCMS-style Structured Text "value" (DAST JSON) to Preact vnodes.
+// Pass the field's \`value\` directly (e.g. \`renderStructuredText(post.body.value)\`).
+// Standard DAST nodes are mapped to HTML tags; unknown node types degrade
+// gracefully by rendering their children (or their text) and are never fatal.
+const __DAST_MARK_TAGS = {
+  strong: "strong",
+  emphasis: "em",
+  code: "code",
+  underline: "u",
+  strikethrough: "s",
+};
+
+function __dastDocument(value) {
+  if (!value || typeof value !== "object") return null;
+  if (value.document) return value.document; // { schema, document }
+  if (value.type === "root") return value; // a bare root node
+  if (value.value) return __dastDocument(value.value); // whole field object
+  return null;
+}
+
+function __dastChildren(node) {
+  const kids = node && Array.isArray(node.children) ? node.children : [];
+  return kids.map((child, i) => __renderDastNode(child, i));
+}
+
+function __renderDastNode(node, key) {
+  if (node == null) return null;
+  if (typeof node === "string") return node;
+
+  switch (node.type) {
+    case "root":
+      return h(Fragment, { key }, __dastChildren(node));
+    case "paragraph":
+      return h("p", { key }, __dastChildren(node));
+    case "heading": {
+      const level = Math.min(Math.max(Number(node.level) || 1, 1), 6);
+      return h("h" + level, { key }, __dastChildren(node));
+    }
+    case "list":
+      return h(node.style === "numbered" ? "ol" : "ul", { key }, __dastChildren(node));
+    case "listItem":
+      return h("li", { key }, __dastChildren(node));
+    case "blockquote":
+      return h("blockquote", { key }, __dastChildren(node));
+    case "link":
+      return h("a", { key, href: node.url }, __dastChildren(node));
+    case "code":
+      return h("pre", { key }, h("code", null, node.code));
+    case "thematicBreak":
+      return h("hr", { key });
+    case "span": {
+      let out = node.value;
+      const marks = Array.isArray(node.marks) ? node.marks : [];
+      for (const mark of marks) {
+        const tag = __DAST_MARK_TAGS[mark];
+        if (tag) out = h(tag, null, out);
+      }
+      // Wrap so array items carry a key without disturbing plain-text spans.
+      return marks.length ? h(Fragment, { key }, out) : out;
+    }
+    default:
+      // Unknown node: render children if any, else its text, else nothing.
+      if (Array.isArray(node.children)) return h(Fragment, { key }, __dastChildren(node));
+      if (typeof node.value === "string") return node.value;
+      return null;
+  }
+}
+
+export function renderStructuredText(value) {
+  const doc = __dastDocument(value);
+  if (!doc) return null;
+  return h(Fragment, null, __dastChildren(doc));
+}
+
 // ---- routing ----------------------------------------------------------------
 
 function compilePattern(pattern) {

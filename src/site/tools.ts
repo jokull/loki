@@ -2,6 +2,7 @@
 
 import { z } from "zod";
 import type { Env } from "../env";
+import { getCms } from "../env";
 import {
   deleteFile,
   getPublishedVersionId,
@@ -45,6 +46,35 @@ export interface SiteTool {
 }
 
 export const SITE_TOOLS: SiteTool[] = [
+  {
+    name: "graphql_query",
+    description:
+      "Explore the content API before writing route queries. Runs a GraphQL document " +
+      "in-process against the live CMS schema and returns the raw { data, errors } as " +
+      "JSON. Introspection is allowed (send a __schema / __type query to discover models " +
+      "and fields). The schema is DatoCMS-style: collection fields are pluralised " +
+      "(allBlogPosts), single-record fields are singular (blogPost(filter: ...)), and " +
+      "record types are suffixed with Record (BlogPostRecord). Set includeDrafts to true " +
+      "to see unpublished content; it defaults to published-only. Use this to prototype a " +
+      "query here, then paste the working document into a route's gql loader.",
+    inputSchema: {
+      query: z.string().describe("GraphQL query or introspection document"),
+      variables: z
+        .record(z.unknown())
+        .optional()
+        .describe("Query variables as a JSON object"),
+      includeDrafts: z
+        .boolean()
+        .optional()
+        .describe("Include draft (unpublished) content; defaults to false"),
+    },
+    async handler({ query, variables, includeDrafts }, { env }) {
+      const result = await getCms(env).execute(query, variables ?? {}, {
+        includeDrafts: includeDrafts ?? false,
+      });
+      return text(JSON.stringify(result, null, 2));
+    },
+  },
   {
     name: "site_write",
     description:
@@ -136,7 +166,14 @@ export const SITE_TOOLS: SiteTool[] = [
   {
     name: "preview_site",
     description:
-      "Mint a short-lived (30 min) preview URL. Visiting it sets a cookie and serves the DRAFT tree with draft CMS content visible. Returns an absolute URL.",
+      "Mint a short-lived (30 min) preview URL. Visiting it sets the HttpOnly cookie " +
+      "`loki_preview` and serves the DRAFT tree with draft CMS content visible. Returns " +
+      "an absolute URL. Non-browser clients: GET the returned /__preview?token=... URL " +
+      "with a cookie jar (it 302-redirects to / and Set-Cookie: loki_preview), then " +
+      "request any draft path reusing that jar. The token/cookie is bound to a 30-min " +
+      "window, NOT to the draft contents — after further site_write edits just re-request " +
+      "the path with the same jar (the draft rebuilds every request); mint a new token " +
+      "only once the 30 min lapses.",
     inputSchema: {},
     async handler(_args, { env }) {
       const token = crypto.randomUUID().replace(/-/g, "");
@@ -144,7 +181,13 @@ export const SITE_TOOLS: SiteTool[] = [
       await setState(env, "preview_token", JSON.stringify({ token, expires }));
       const url = `${SITE_ORIGIN}/__preview?token=${token}`;
       return text(
-        `Preview ready (valid 30 min):\n${url}\n\nOpen it to view the draft; it sets an HttpOnly cookie and redirects to /.`,
+        `Preview ready (valid 30 min):\n${url}\n\n` +
+          `Browser: open it — sets the HttpOnly cookie \`loki_preview\` and redirects to /.\n` +
+          `Programmatic (curl -c jar -b jar / fetch with a cookie jar):\n` +
+          `  1. GET ${url}  (follow the 302; stores the loki_preview cookie)\n` +
+          `  2. GET ${SITE_ORIGIN}/<any draft path>  reusing the jar -> draft HTML\n` +
+          `The token lasts 30 min and is independent of edits: after more site_write calls, ` +
+          `just re-request with the same jar (no new token needed until it expires).`,
       );
     },
   },
