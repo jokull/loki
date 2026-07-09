@@ -165,6 +165,10 @@ async function runSite(
   if (exports?.AuthEntrypoint) {
     workerEnv.AUTH = exports.AuthEntrypoint({ props: { siteId } });
   }
+  // Transactional email: env.MAIL.send({to,subject,html/text}) via Cloudflare Email.
+  if (exports?.MailEntrypoint) {
+    workerEnv.MAIL = exports.MailEntrypoint({ props: { siteId } });
+  }
   // Mediated outbound: any external fetch() the site makes is proxied + logged
   // through OutboundEntrypoint (per-site policy seam). Falls back to no network
   // if the entrypoint is somehow unavailable.

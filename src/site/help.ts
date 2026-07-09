@@ -129,8 +129,9 @@ from BOTH a loader (server) and an island (browser):
 - \`.handler({ data, env, request, user })\`: runs IN THE ISOLATE. \`env\` is the
   site's narrow capability env — the SAME one a loader/render gets: \`env.GRAPHQL\`,
   \`env.RECORDS\`, \`env.REALTIME\`, \`env.FEATURES_SQL\`, \`env.SECRETS\` (read stored API
-  keys), \`env.AUTH\` (send magic-link sign-ins), plus MEDIATED outbound \`fetch()\` to
-  external hosts. There is NO raw DB and NO Worker Loader. \`user\` is the signed-in
+  keys), \`env.AUTH\` (send magic-link sign-ins), \`env.MAIL\` (send transactional
+  email), plus MEDIATED outbound \`fetch()\` to external hosts. There is NO raw DB
+  and NO Worker Loader. \`user\` is the signed-in
   end user (\`{ id, email }\`) or \`null\`. The return value is JSON-serialized to
   callers; annotate it (e.g. via
   \`import type { X } from "loki/schema"\`) so its type flows to the caller.
@@ -306,6 +307,28 @@ config needed to start. Combine with \`env.SECRETS\`:
 
 Only HTTP(S) via \`fetch\` is mediated — raw TCP sockets are not available. Outbound
 fetch is server-only; the browser build never makes these calls.
+
+## Transactional email (env.MAIL)
+
+Send email from a serverFn/loader with \`env.MAIL.send({ to, subject, html?, text? })\`
+— order confirmations, notifications, etc. (Sign-in links go through the built-in
+auth below, not this.) Returns \`{ ok, id? }\` or \`{ ok:false, error }\`.
+
+    export const notify = serverFn({ method: "POST" })
+      .validator((i: any) => ({ to: String(i?.to || ""), name: String(i?.name || "") }))
+      .handler(async ({ data, env }) => {
+        const r = await env.MAIL.send({
+          to: data.to,
+          subject: "Thanks for your order",
+          html: \`<p>Hi \${data.name}, your order is confirmed.</p>\`,
+          text: \`Hi \${data.name}, your order is confirmed.\`,
+        });
+        if (!r.ok) throw new Error(r.error);
+        return { sent: true };
+      });
+
+Email sends from a shared \`loftur.app\` address (the platform's verified sender).
+Provide \`fromName\` to set the display name and \`replyTo\` for replies. Server-only.
 
 ## User auth (passwordless email sign-in)
 

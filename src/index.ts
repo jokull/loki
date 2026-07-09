@@ -44,6 +44,7 @@ export { TenantDB, TenantFeatureDB } from "./tenant-db";
 export { SecretsEntrypoint } from "./secrets";
 export { OutboundEntrypoint } from "./outbound";
 export { AuthEntrypoint } from "./auth";
+export { MailEntrypoint } from "./mail";
 
 /**
  * Loopback GraphQL entrypoint for the dynamic site worker.
