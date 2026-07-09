@@ -25,14 +25,18 @@ Live now:
 - **Phase 2 — marketing + docs** ✅ landing (hero/how-it-works/features/CTA), /docs, /changelog.
 - **Phase 3 — observability** ✅ per-site `_logs` ring; render + serverFn errors captured;
   `env.LOG.write`; `site_logs` MCP tool. e2e 5/5.
-- **Phase 4 — capabilities** (partial): ✅ `env.MAIL` (transactional email), ✅ end-user
-  **roles** (`user.role` + set_user_role/list_users), ✅ `env.UPLOADS` (R2 uploads +
-  /__uploads serving). Each blind-tested.
+- **Phase 4 — capabilities**: ✅ `env.MAIL` (transactional email), ✅ end-user **roles**
+  (`user.role` + set_user_role/list_users), ✅ `env.UPLOADS` (R2 uploads + /__uploads),
+  ✅ **i18n** (docs-only — agent-cms exposes `locale: SiteLocale` on every field; documented
+  the query + `[lang]` route pattern in site_help). Each capability blind-tested.
+- **Phase 5 — templates** ✅ `scaffold_template` + members & link-in-bio starters (publish clean).
+- **Phase 6 — hardening**: ✅ per-site outbound `allowedHosts` allowlist (403 on unlisted).
 - **Phase 7 — DX** (partial): ✅ `site_status` health tool, ✅ consolidated `scripts/smoke/`
-  suite (auth·web·mail·roles·logs·uploads).
+  suite (auth·web·roles·logs·uploads·templates·allowlist; +mail with MAIL=1).
 
 ## Smoke suite — all green
-auth 13/13 (14 with mail) · web 9/9 · roles 5/5 · logs 5/5 · uploads 3/3 · mail 2/2.
+`pnpm smoke` → 7/7 suites: auth 13/13 · web 9/9 · roles 5/5 · logs 5/5 · uploads 3/3 ·
+templates 7/7 · allowlist 3/3 (+ mail 2/2 with MAIL=1).
 
 ## NEEDS YOU (morning)
 1. **Review** https://loftur-web.solberg.workers.dev (dashboard + marketing — design/copy).
@@ -47,15 +51,18 @@ auth 13/13 (14 with mail) · web 9/9 · roles 5/5 · logs 5/5 · uploads 3/3 · 
 - Added loki admin routes `/__accountmagic` (+ existing `/__authmagic`), WRITE_KEY-gated, for tests.
 - RUNTIME_VERSION r13→r15 (user injection r14, logs r15).
 
-## NOT done (scoped for next — see PLAN.md)
-- Phase 4: i18n (needs agent-cms locale API confirmation), cron (scheduled fan-out is heavy +
-  cost), analytics (needs Analytics Engine binding), SEO auto-gen (agent can already write
-  sitemap/rss as routes — low platform value).
-- Phase 5: templates / `scaffold_template`.
-- Phase 6: hardening (outbound allowlist/rate-limits — note: SSRF-to-metadata is largely N/A
-  on Workers; the real gap is rate-limiting email/uploads, which needs a counter store).
-- Phase 7: pull/push-to-disk.
-- Dashboard "Logs" tab (needs web→TenantFeatureDB read path; site_logs MCP tool covers the agent).
+## NOT done (scoped for next — each has a real blocker, better with you awake)
+- **cron** (per-site scheduled serverFns): fan-out would load every tenant isolate on a
+  schedule — real compute/cost implications; wants a design decision.
+- **analytics** (env.ANALYTICS): needs an Analytics Engine binding added + a query token for
+  the dashboard chart.
+- **rate-limits** for email/uploads (abuse): needs a per-site counter store (DO/KV). Note the
+  allowlist already lets a site cap egress hosts; SSRF-to-metadata is largely N/A on Workers.
+- **pull/push-to-disk** (Phase 7): HTTP tarball checkout + push pipeline — substantial.
+- **SEO auto-gen**: the agent can already write sitemap.xml/rss.xml/robots.txt as routes; a
+  platform auto-generator needs page/URL conventions — low value.
+- **Dashboard "Logs" tab**: needs a web→TenantFeatureDB read path; the `site_logs` MCP tool
+  already covers the building agent.
 
 ## Bugs/frictions resolved (no product bugs found)
 getRouter export name · pnpm allowBuilds placeholders · shared D1/BufferSource lib-portability ·
