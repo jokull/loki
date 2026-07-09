@@ -33,6 +33,7 @@ import {
   validateDocuments,
 } from "./publish";
 import { getSchemaBundle } from "./schema-types";
+import { runShell, resetDraft, formatShellResult } from "./shell";
 import { SITE_HELP } from "./help";
 import type { Bundle } from "./bundle";
 import {
@@ -611,6 +612,68 @@ export const SITE_TOOLS: SiteTool[] = [
         return `v${v.id}  ${v.created_at}  ${v.message ?? "(no message)"}${marker}`;
       });
       return text(lines.join("\n"));
+    },
+  },
+  {
+    name: "shell",
+    description:
+      "Run a shell command line against the site's WORKING TREE (the draft) — a " +
+      "real in-process bash with a virtual filesystem, no kernel, hermetic and " +
+      "scoped to this site. Use it to NAVIGATE and TEXT-EDIT code the way you would " +
+      "in a repo folder: grep/rg to find, sed/awk/cut/tr to transform, cat/head/" +
+      "tail/ls/find/tree/wc/sort/uniq/diff/jq to inspect. Supports pipes, " +
+      "redirections (>, >>, 2>&1), &&/||/;, globs, variables, for/while/if, and " +
+      "functions.\n\n" +
+      "READS come from the live draft (code files as source; binary assets under " +
+      "public/ appear as opaque empty placeholders). WRITES route through the SAME " +
+      "transpile + gql-validate + dep-resolve pipeline as site_write — a `sed -i` on " +
+      "a .tsx yields a properly transpiled draft file (never raw source), and adding " +
+      "an import triggers dep resolution. Edits are LIVE in the draft immediately, so " +
+      "preview_site reflects them and publish_site commits them; reset_site discards " +
+      "the whole draft.\n\n" +
+      "Returns stdout/stderr/exitCode plus `changedFiles` (paths written) and " +
+      "`warnings` (transpile / serverFn / dependency / graphql problems from those " +
+      "writes). A write whose TSX fails to transpile still LANDS (so `cat` reads it " +
+      "back) but is flagged and BLOCKS publish until fixed.\n\n" +
+      "HERMETIC / FAKE TOOLCHAIN: there is NO real git, tsc, node, npm, drizzle-kit, " +
+      "or network here — text utilities only. To validate types/gql use the write " +
+      "pipeline + publish_site; for content use graphql_query; for record/feature-DB " +
+      "work use serverFns. (python3/js-exec/sqlite/curl are intentionally disabled.)",
+    inputSchema: {
+      command: z
+        .string()
+        .describe("A shell command line, e.g. `grep -rn accent styles.css`"),
+    },
+    async handler({ command }, { env }) {
+      const result = await runShell(env, command);
+      const out = formatShellResult(command, result);
+      return result.exitCode === 0
+        ? text(out)
+        : { content: [{ type: "text" as const, text: out }], isError: false };
+    },
+  },
+  {
+    name: "reset_site",
+    description:
+      "Discard ALL draft changes and restore the working tree to exactly match the " +
+      "currently PUBLISHED version — the `git checkout .` escape hatch for a molding " +
+      "session gone wrong. Afterward site_diff is clean. Rebuilds site_files + " +
+      "site_assets from the version's snapshot: authored SOURCE is restored " +
+      "byte-for-byte for versions published with a source snapshot; legacy versions " +
+      "fall back to compiled form. Does NOT change the live site.",
+    inputSchema: {},
+    async handler(_args, { env }) {
+      const r = await resetDraft(env);
+      if (!r.ok) return errorResult(`reset_site: ${r.error}`);
+      const note = r.faithful
+        ? "Original source restored byte-for-byte."
+        : "Restored from the compiled snapshot (published before source snapshots " +
+          "existed): untouched files keep their source; any file you edited is " +
+          "restored to its compiled form.";
+      return text(
+        `Draft reset to the published version (${r.restoredFiles} file(s), ` +
+          `${r.restoredAssets} asset(s)). site_diff is now clean. ${note}`,
+      );
     },
   },
   {
