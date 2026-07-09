@@ -129,24 +129,25 @@ async function runSite(
   // returns only that tenant's content). Wired for every site.
   const graphql = makeGraphqlBinding(ctx, includeDrafts, siteId);
   if (graphql) workerEnv.GRAPHQL = graphql;
-  // Scoped record WRITES + the shared feature DB stay default-only in this v2
-  // slice (per-tenant record writes + per-tenant feature DB via
-  // drizzle-orm/durable-sqlite are the next increment). Tenant sites author
-  // content through the MCP tools (which route to the tenant's DO).
+  // Feature-data SQL, per-site: the default site uses the shared FEATURES_DB; a
+  // tenant uses its OWN tables in its TenantDB SQLite. Either way the site isolate
+  // sees `env.FEATURES_SQL` with the same narrow exec() contract (drizzle
+  // sqlite-proxy), and never a raw D1 (which can't cross the loader boundary).
   const isDefault = siteId === DEFAULT_SITE_ID;
   if (isDefault) {
-    // Scoped record writes: RECORDS.create is gated by this tree's allowlist.
-    if (exports?.RecordsEntrypoint) {
-      workerEnv.RECORDS = exports.RecordsEntrypoint({
-        props: { allowlist: parseWritableModels(bundle), siteId },
-      });
-    }
-    // Feature-DB SQL capability (mediated D1): a raw D1Database can't cross the
-    // Worker-Loader env (DataCloneError), so serverFns reach FEATURES_DB via this
-    // WorkerEntrypoint's async exec() RPC — e.g. through drizzle's sqlite-proxy.
     if (exports?.FeaturesDbEntrypoint) {
       workerEnv.FEATURES_SQL = exports.FeaturesDbEntrypoint({});
     }
+  } else if (exports?.TenantFeaturesEntrypoint) {
+    workerEnv.FEATURES_SQL = exports.TenantFeaturesEntrypoint({ props: { siteId } });
+  }
+  // Scoped record WRITES stay default-only in this v2 slice (per-tenant record
+  // writes via the tenant's DO are the next increment; tenant sites author
+  // content through the MCP tools, which already route to the tenant's DO).
+  if (isDefault && exports?.RecordsEntrypoint) {
+    workerEnv.RECORDS = exports.RecordsEntrypoint({
+      props: { allowlist: parseWritableModels(bundle), siteId },
+    });
   }
   // Realtime fan-out: REALTIME.publish(channel, message). Channels are
   // namespaced per site, so this is safe for every tenant.

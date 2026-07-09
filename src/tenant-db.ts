@@ -204,6 +204,27 @@ export class TenantDB extends DurableObject<Env> {
     return { status: res.status, headers: outHeaders, body: await res.text() };
   }
 
+  /**
+   * Feature-data SQL for this tenant's serverFns (drizzle sqlite-proxy shape).
+   * Same contract as FeaturesDbEntrypoint.exec but over this DO's SqlStorage —
+   * so a tenant's Drizzle queries hit ITS OWN tables. Tenant app tables live in
+   * this same SQLite (create them with CREATE TABLE via method "run").
+   */
+  async featureExec(
+    sql: string,
+    params: unknown[] = [],
+    method: "run" | "all" | "get" | "values" = "all",
+  ): Promise<{ rows: unknown }> {
+    const cursor = this.sqlStore.exec(sql, ...(params as any[]));
+    if (method === "run") {
+      cursor.toArray(); // drain/commit
+      return { rows: [] };
+    }
+    const rows = [...cursor.raw()] as unknown[][]; // positional value arrays
+    if (method === "get") return { rows: rows[0] };
+    return { rows };
+  }
+
   /** Cheap health/inspection: table names in this tenant's SQLite. */
   async tables(): Promise<string[]> {
     return this.sqlStore

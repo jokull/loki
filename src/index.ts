@@ -37,7 +37,7 @@ export type { Env };
 // wrangler can bind the Durable Object class by name.
 export { ChannelDO, RealtimeEntrypoint } from "./realtime";
 export { RecordsEntrypoint } from "./records";
-export { FeaturesDbEntrypoint } from "./features-db";
+export { FeaturesDbEntrypoint, TenantFeaturesEntrypoint } from "./features-db";
 export { TenantDB } from "./tenant-db";
 
 /**
