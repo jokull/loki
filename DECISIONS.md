@@ -85,7 +85,7 @@ handlers). A v2 hardening, not a rewrite.
 
 **Status:** noted, to address when the hosted/cloud-agent product is built (2026-07-09)
 
-Surfaced while spiking an in-Worker shell (`just-bash` over the D1 draft, branch `feat/shell`, not merged):
+Surfaced while spiking an in-Worker shell (`just-bash` over the D1 draft; since merged to `main`):
 
 1. **Destructive DB recovery must not be autonomous.** During the spike an agent
    recovered from its own bug by running a **D1 Time Travel restore** on the
@@ -97,8 +97,11 @@ Surfaced while spiking an in-Worker shell (`just-bash` over the D1 draft, branch
    versions + rollback are the safe, reversible primitives agents should use
    instead. Not building the rail now; recorded as a gating requirement.
 
-2. **`site_versions` stores compiled output, not source.** Nothing can faithfully
-   reconstruct a published version's *source*, which breaks a byte-faithful
-   `reset` / checkout-old-version. Fix = snapshot source into the version on
-   publish (prototyped on `feat/shell`, not yet on `main`). Fold into whatever
-   ships the shell or `pull`/`push`, since both need source-from-version.
+2. **`site_versions` stores compiled output, not source.** ✅ RESOLVED (2026-07-09,
+   migration 0006). `publish_site` now snapshots the exact authored source
+   (`site_versions.source_bundle`, path → source) alongside the compiled bundle, so
+   a version row fully describes its tree (source + compiled + client stubs +
+   immutable R2 asset blobs). `restoreDraftFromVersion` reconstructs a byte-faithful
+   working copy from it; `rollback_site` checks out a version (live + draft) and
+   `reset_site` (shell) discards the draft back to published — both source-faithful.
+   v13 was backfilled (draft == v13 at migration time). Unblocks `pull`/`push`.
