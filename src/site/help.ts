@@ -253,32 +253,38 @@ Push live updates to connected browsers over WebSockets.
   \`{ close }\` for cleanup. It THROWS if called during SSR — call it in a
   \`useEffect\`.
 
-## Package dependencies (npm imports — no install, no bundler)
+## Package dependencies (npm imports — no install, no bundler, no allowlist)
 
-You can \`import\` from a real npm package. There is NO \`npm install\` and NO bundler
-step: when you \`site_write\` a file, Loki (which has network) RESOLVES each bare
-import via esm.sh in the supervisor, crawls the module graph, and SNAPSHOTS a
-self-contained, version-pinned copy into R2. \`site_write\` returns a \`resolvedDeps\`
-block — \`[{ specifier, version, files, bytes, loadable }]\` — so you see exactly
-what got pinned. The pin is recorded per draft and snapshotted into the published
-version, so preview / publish / rollback all serve byte-identical dependency code
-(reproducible; no drift). Resolving a package the FIRST time takes a few seconds
-(the crawl + store); re-importing an already-resolved package is instant.
+You can \`import\` from ANY real npm package — there is no curated list. There is
+NO \`npm install\` and NO bundler step: when you \`site_write\` a file, Loki (which
+has network) RESOLVES each bare import via esm.sh in the supervisor, crawls the
+module graph, SNAPSHOTS a self-contained, version-pinned copy into R2, and then
+TEST-LOADS that snapshot in a throwaway workerd isolate to see whether it actually
+links + runs here. \`site_write\` returns a \`resolvedDeps\` block —
+\`[{ specifier, version, files, bytes, loadable }]\` — so you see exactly what got
+pinned. The pin is recorded per draft and snapshotted into the published version,
+so preview / publish / rollback all serve byte-identical dependency code
+(reproducible; no drift). Resolving a NEW or large package the FIRST time takes a
+few seconds (crawl + store + test-load); re-importing an already-resolved package
+is instant.
 
-CURRENT ALLOWLIST (spike): only \`drizzle-orm\` and its subpaths (e.g.
-\`drizzle-orm/sqlite-proxy\`, \`drizzle-orm/sqlite-core\`) are resolvable. Any OTHER
-bare specifier is REJECTED at \`site_write\` with a message naming the allowed scope
-and the Loki built-ins — the draft tree never holds an unresolvable import (same
-ethos as write-time gql validation).
+Loki decides support EMPIRICALLY, not from a name list. Supported means: pure
+ESM + workerd-compatible + no Node builtins. Concretely, a package is accepted iff
+its snapshot links and executes in the test-load; otherwise \`site_write\` REJECTS
+the import (the draft tree never holds an unusable dependency — same ethos as
+write-time gql validation) with a specific reason:
+- NOT FOUND — \`package "<spec>" not found on esm.sh\` (check the name/subpath).
+- NOT WORKERD-COMPATIBLE — e.g. \`imports "node:fs", a Node builtin that isn't
+  available in workerd\`. The site isolate has NO \`nodejs_compat\`; a package that
+  needs \`node:fs\` / \`node:net\` / the real \`node:crypto\` module (etc.) can't load
+  here. (esm.sh's pure-JS polyfills like Buffer DO link; a polyfill that itself
+  pulls a \`node:\` builtin does not — and that surfaces as this same rejection.)
+- TOO LARGE — a package whose crawled module set is too big to snapshot is
+  rejected with its file/byte count.
 
-CONSTRAINTS — the ceiling of what can be imported:
-- ESM + workerd-compatible ONLY. The isolate has NO \`nodejs_compat\`. A package
-  that needs a Node built-in (\`fs\`, \`net\`, real \`crypto\` module, etc.) will FAIL
-  to load — that failure is the correct signal it isn't usable here. (esm.sh's
-  pure-JS polyfills like Buffer DO link; a polyfill that itself pulls a \`node:\`
-  builtin does not.)
+Other constraints on what a dep can DO once loaded:
 - No outbound network from the isolate regardless — a package that phones home
-  won't work.
+  won't work at runtime even if it loads.
 - Deps imported inside a serverFn module are SERVER-ONLY: serverFn modules are
   stubbed in the browser build, so the dependency code is NEVER shipped to the
   client. (This is exactly why the feature-DB \`drizzle\` import below is
@@ -354,8 +360,9 @@ correctly with no manual plumbing.
   see "Feature database" above), and
   \`connectChannel(name, onMessage)\` (client-only realtime subscription — see
   "Realtime" below).
-- Resolver-allowlisted npm packages: \`drizzle-orm\` and its subpaths (resolved via
-  esm.sh at write time — see "Package dependencies" above).
+- ANY npm package (no allowlist): resolved via esm.sh at write time and
+  test-loaded for workerd-compatibility — see "Package dependencies" above.
+  \`drizzle-orm\` (used by the feature DB below) is one example.
 - \`loki/schema\` (TYPE IMPORTS ONLY) -> content types generated from the live
   schema: \`import type { BlogPostRecord, Query } from "loki/schema"\`. See "Typed
   content" below; read the exact shapes with the \`schema_types\` tool.

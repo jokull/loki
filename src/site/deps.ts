@@ -1,19 +1,23 @@
 // npm-dependency resolver: esm.sh snapshot of a bare import specifier.
 //
-// THESIS: an agent just `import`s a package; Loki resolves + snapshots it via
+// THESIS: an agent just `import`s ANY package; Loki resolves + snapshots it via
 // esm.sh in the SUPERVISOR (which has network) at write/publish time and serves
 // a self-contained, version-pinned module set into the site isolate — no
-// userland npm install, no bundler.
+// userland npm install, no bundler. There is NO name-based allowlist: any bare
+// specifier that isn't a Loki built-in is a candidate, and Loki EMPIRICALLY
+// determines whether it is supported by TEST-LOADING the snapshot in a throwaway
+// isolate (see loadable() below) — the isolate is workerd with NO nodejs_compat,
+// so a package needing Node builtins fails legibly rather than being pre-judged.
 //
-// General mechanism (Drizzle is the spike's test package):
+// General mechanism:
 //  1. Pin a concrete version and fetch `<spec>?bundle&target=es2022`. On a
 //     package SUBPATH that yields (essentially) one self-contained file; on a
 //     package ROOT `?bundle` does NOT inline, so we recursively CRAWL every
 //     imported esm.sh URL, save each locally, and rewrite specifiers to relative
 //     local module keys (ported from the de-risking probe's crawl.mjs).
-//  2. Dead `/node/*` esm.sh polyfill imports (e.g. an unused `/node/buffer.mjs`
-//     in sqlite-core) are rewritten to a shared empty stub — the isolate has NO
-//     nodejs_compat, and these imports are unused.
+//  2. esm.sh's `/node/*` polyfill imports are crawled + inlined like any other
+//     esm.sh module. A polyfill that itself pulls a real `node:` builtin surfaces
+//     at test-load as the correct "not workerd-compatible" signal.
 //  3. The result has ZERO esm.sh import references (banners stripped too). Each
 //     module's bytes are content-addressed in R2 at `site/dep/<sha256>` (mirrors
 //     static-assets.ts), and a pin is recorded in the `site_deps` lockfile so
@@ -21,22 +25,26 @@
 //
 // The set is injected into the isolate module map namespaced by content hash
 // (`deps/<depHash>/<localKey>`) and the author's bare import is rewritten to the
-// entry module key (see bundle.ts). For the spike the resolver is GATED to the
-// `drizzle-orm` scope, but nothing here is drizzle-specific.
+// entry module key (see bundle.ts).
 
 import type { Env } from "../env";
 import type { DepManifestEntry, DepSnapshot } from "./store";
-import { getDepEntry, upsertDep } from "./store";
+import { getDepEntry, getState, setState, upsertDep } from "./store";
+import { COMPAT_DATE } from "./bundle";
 
 const ESM_ORIGIN = "https://esm.sh";
 const DEP_BLOB_PREFIX = "site/dep/";
 
-/**
- * Resolver allowlist for the spike. A bare specifier is resolvable iff it is the
- * `drizzle-orm` package or one of its subpaths. Broadening the spike to more
- * packages is a one-line change here — the machinery is package-agnostic.
- */
-const ALLOWED_SCOPES = ["drizzle-orm"];
+// ---- Guardrails (fail legibly, never hang or store a monster) ----------------
+
+/** Per-esm.sh-fetch timeout. A slow/hung esm.sh call aborts with a clear error. */
+const ESM_FETCH_TIMEOUT_MS = 15_000;
+/** Max modules in a single package's crawled set before we refuse to snapshot. */
+const MAX_DEP_FILES = 400;
+/** Max total bytes of a package's crawled module set before we refuse. */
+const MAX_DEP_BYTES = 8 * 1024 * 1024; // 8 MB
+/** Hard cap on crawl iterations (belt-and-braces vs. a pathological graph). */
+const MAX_CRAWL_MODULES = 500;
 
 /** Built-in specifiers Loki injects itself — never resolved via esm.sh. */
 export const BUILTIN_SPECIFIERS = new Set<string>([
@@ -57,15 +65,6 @@ export function isBareSpecifier(spec: string): boolean {
   return true;
 }
 
-/** True if `spec` is within an allowlisted resolver scope (pkg or pkg/sub). */
-export function isAllowedDep(spec: string): boolean {
-  return ALLOWED_SCOPES.some((s) => spec === s || spec.startsWith(s + "/"));
-}
-
-export function allowedScopesDoc(): string {
-  return ALLOWED_SCOPES.join(", ");
-}
-
 // Matches an ES import/export-from/dynamic-import specifier (single or double
 // quoted). Mirrors the probe crawler's regex; used on SOURCE and on esm.sh code.
 const SPEC_RE =
@@ -84,17 +83,19 @@ export function parseBareImports(source: string): string[] {
 }
 
 /**
- * Bare specifiers a bundle imports that fall in the resolver allowlist AND are
- * not Loki built-ins. These are the deps that must be assembled into the isolate.
+ * Every bare specifier a bundle imports that is NOT a Loki built-in — i.e. every
+ * candidate npm dep that must be resolved + assembled into the isolate. There is
+ * no name allowlist: support is determined empirically by test-load at resolve
+ * time, so any bare, non-built-in specifier is a dep candidate here.
  */
-export function collectAllowedDepSpecifiers(
+export function collectDepSpecifiers(
   bundle: Record<string, string>,
 ): string[] {
   const out = new Set<string>();
   for (const code of Object.values(bundle)) {
     for (const spec of parseBareImports(code)) {
       if (BUILTIN_SPECIFIERS.has(spec)) continue;
-      if (isAllowedDep(spec)) out.add(spec);
+      out.add(spec);
     }
   }
   return [...out];
@@ -136,9 +137,122 @@ export interface ResolvedDep {
   manifest: Record<string, string>;
   files: number;
   bytes: number;
+  /** Always true for a returned dep — resolveDep throws when the test-load fails. */
+  loadable: true;
 }
 
 class DepResolveError extends Error {}
+
+interface LoadableResult {
+  loadable: boolean;
+  /** Concise, agent-legible reason when `loadable` is false. */
+  reason?: string;
+}
+
+// Per-isolate cache of test-load verdicts, keyed by content-addressed depHash.
+// A dep's module set is immutable under its hash, so a verdict never goes stale.
+const LOADABLE_CACHE = new Map<string, LoadableResult>();
+const LOADABLE_STATE_PREFIX = "deploadable:";
+
+/**
+ * Empirically decide whether a snapshotted dep is usable in the site isolate by
+ * TEST-LOADING it in a throwaway, non-cached dynamic isolate (`env.LOADER.load`)
+ * — runs in the SUPERVISOR only (the site sandbox has no LOADER). A tiny probe
+ * module imports the dep's entry module and touches its namespace + default
+ * export, forcing the module graph to link AND top-level-execute. If it links and
+ * runs → loadable. If linking/executing throws (a `node:` builtin the isolate
+ * lacks, a missing binding, non-ESM) → not loadable, with a trimmed reason.
+ *
+ * Cached by depHash (in-memory + site_state) so it is not re-run on every write.
+ */
+async function loadable(
+  env: Env,
+  depHash: string,
+  entryKey: string,
+  modules: Record<string, string>,
+): Promise<LoadableResult> {
+  const cached = LOADABLE_CACHE.get(depHash);
+  if (cached) return cached;
+  const persisted = await getState(env, LOADABLE_STATE_PREFIX + depHash);
+  if (persisted) {
+    try {
+      const parsed = JSON.parse(persisted) as LoadableResult;
+      LOADABLE_CACHE.set(depHash, parsed);
+      return parsed;
+    } catch {
+      // fall through and re-run
+    }
+  }
+
+  // Build a throwaway worker whose modules are the dep's own set keyed by their
+  // flat localKeys (their internal imports are already relative `./localKey`),
+  // plus a probe main module that imports the entry and exercises its exports.
+  const probeModules: Record<string, { js: string }> = {};
+  for (const [localKey, code] of Object.entries(modules)) {
+    probeModules[localKey] = { js: code };
+  }
+  const PROBE = "__loki_probe.js";
+  probeModules[PROBE] = {
+    js:
+      `import * as __ns from ${JSON.stringify("./" + entryKey)};\n` +
+      `export default {\n` +
+      `  fetch() {\n` +
+      // Touch the namespace + default so the linker cannot dead-strip the import
+      // and the module's top-level code is forced to have executed.
+      `    const __k = Object.keys(__ns).length;\n` +
+      `    void __ns.default; void __k;\n` +
+      `    return new Response("ok");\n` +
+      `  },\n` +
+      `};\n`,
+  };
+
+  const result = await runProbe(env, PROBE, probeModules);
+  LOADABLE_CACHE.set(depHash, result);
+  await setState(env, LOADABLE_STATE_PREFIX + depHash, JSON.stringify(result));
+  return result;
+}
+
+/** Load + fetch the probe isolate, mapping any link/exec failure to a reason. */
+async function runProbe(
+  env: Env,
+  mainModule: string,
+  modules: Record<string, { js: string }>,
+): Promise<LoadableResult> {
+  try {
+    const stub = env.LOADER.load({
+      compatibilityDate: COMPAT_DATE,
+      mainModule,
+      modules,
+      env: {},
+      globalOutbound: null,
+    });
+    const res = await stub.getEntrypoint().fetch(new Request("https://probe.internal/"));
+    // Any HTTP response (even non-2xx) means the graph linked + executed.
+    await res.body?.cancel().catch(() => {});
+    return { loadable: true };
+  } catch (err) {
+    return { loadable: false, reason: describeLoadFailure(err) };
+  }
+}
+
+/** Turn a raw test-load error into a concise, actionable one-liner. */
+function describeLoadFailure(err: unknown): string {
+  const raw = (err instanceof Error ? err.message : String(err)).replace(/\s+/g, " ").trim();
+  // A missing Node builtin is the canonical "not workerd-compatible" case.
+  const nodeMatch = raw.match(/(?:no such module|cannot find module|module not found)[^"']*["']?(node:[a-z/]+)/i)
+    || raw.match(/["'](node:[a-z/]+)["']/i)
+    || raw.match(/\b(node:[a-z/]+)\b/i);
+  if (nodeMatch) {
+    return `imports "${nodeMatch[1]}", a Node builtin that isn't available in workerd (no nodejs_compat).`;
+  }
+  if (/no such module|cannot find module|module not found|unresolved/i.test(raw)) {
+    return `a module in its graph failed to resolve in workerd: ${raw.slice(0, 240)}`;
+  }
+  if (/is not( a)? (valid )?(es ?module|module)|unexpected|not esm/i.test(raw)) {
+    return `it is not workerd-loadable ES module code: ${raw.slice(0, 240)}`;
+  }
+  return raw.slice(0, 280) || "unknown test-load failure";
+}
 
 /**
  * Crawl the esm.sh module graph for `specifier`, producing a self-contained
@@ -193,20 +307,31 @@ async function crawlEsm(specifier: string): Promise<{
     const norm = normalizeUrl(u);
     const localName = localNameFor(norm);
     let res: Response;
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), ESM_FETCH_TIMEOUT_MS);
     try {
-      res = await fetch(norm);
+      res = await fetch(norm, { signal: ac.signal });
     } catch (err) {
+      if (ac.signal.aborted) {
+        throw new DepResolveError(
+          `Timed out after ${ESM_FETCH_TIMEOUT_MS}ms fetching ${norm} from esm.sh.`,
+        );
+      }
       throw new DepResolveError(
         `Failed to fetch ${norm}: ${err instanceof Error ? err.message : String(err)}`,
       );
+    } finally {
+      clearTimeout(timer);
     }
     if (res.status === 404) {
       throw new DepResolveError(
-        `esm.sh has no module at ${norm} (HTTP 404) — check the specifier "${specifier}".`,
+        `package "${specifier}" not found on esm.sh (HTTP 404 for ${norm}).`,
       );
     }
     if (!res.ok) {
-      throw new DepResolveError(`esm.sh returned HTTP ${res.status} for ${norm}.`);
+      throw new DepResolveError(
+        `package "${specifier}" not resolvable on esm.sh — HTTP ${res.status} for ${norm}.`,
+      );
     }
     const ctype = res.headers.get("content-type") || "";
     const src = await res.text();
@@ -260,9 +385,10 @@ async function crawlEsm(specifier: string): Promise<{
   const entryKey = localNameFor(startNorm);
   let guard = 0;
   while (queue.length) {
-    if (++guard > 500) {
+    if (++guard > MAX_CRAWL_MODULES) {
       throw new DepResolveError(
-        `Dependency graph for "${specifier}" exceeded 500 modules — refusing to snapshot.`,
+        `package "${specifier}" too large to snapshot: dependency graph exceeded ` +
+          `${MAX_CRAWL_MODULES} modules.`,
       );
     }
     await processUrl(queue.shift()!);
@@ -287,9 +413,15 @@ async function crawlEsm(specifier: string): Promise<{
 }
 
 /**
- * Resolve + snapshot a dep: crawl esm.sh, content-address every module in R2,
- * and upsert the lockfile pin. Idempotent — re-storing identical bytes is a HEAD
- * + skip. Returns the ResolvedDep for write-time feedback. Runs in the SUPERVISOR.
+ * Resolve + snapshot a dep: crawl esm.sh, TEST-LOAD the snapshot in a throwaway
+ * isolate to confirm it is workerd-compatible, then content-address every module
+ * in R2 and upsert the lockfile pin. Idempotent — re-storing identical bytes is a
+ * HEAD + skip. Runs in the SUPERVISOR (which alone has network + LOADER).
+ *
+ * Throws DepResolveError — with a concise, actionable reason — on any failure:
+ * not found, too large, or NOT LOADABLE (e.g. needs a Node builtin). On a
+ * not-loadable dep NOTHING is persisted (no R2 blobs, no lockfile pin), so the
+ * draft tree never holds a broken pin.
  */
 export async function resolveDep(
   env: Env,
@@ -303,31 +435,28 @@ export async function resolveDep(
       `"${specifier}" is a Loki built-in, not an npm dependency.`,
     );
   }
-  if (!isAllowedDep(specifier)) {
-    throw new DepResolveError(
-      `Dependency "${specifier}" is not in the resolver allowlist. ` +
-        `Allowed for now: ${allowedScopesDoc()} (and their subpaths).`,
-    );
-  }
 
   const { version, entryKey, modules } = await crawlEsm(specifier);
 
-  // Content-address each module in R2.
-  const manifest: Record<string, string> = {};
+  // Guardrail: refuse to snapshot a monster. Computed on the crawled set BEFORE
+  // any R2 write so a huge package never lands in the store.
+  const files = Object.keys(modules).length;
   let bytes = 0;
-  for (const [localKey, code] of Object.entries(modules)) {
-    const blobHash = await sha256Hex(code);
-    manifest[localKey] = blobHash;
+  for (const code of Object.values(modules)) {
     bytes += new TextEncoder().encode(code).length;
-    const objKey = DEP_BLOB_PREFIX + blobHash;
-    const existing = await env.ASSETS.head(objKey);
-    if (!existing) {
-      await env.ASSETS.put(objKey, code, {
-        httpMetadata: { contentType: "text/javascript; charset=utf-8" },
-      });
-    }
-    // Warm the in-memory cache so a subsequent serve is immediate.
-    DEP_CODE_CACHE.set(blobHash, code);
+  }
+  if (files > MAX_DEP_FILES || bytes > MAX_DEP_BYTES) {
+    throw new DepResolveError(
+      `package "${specifier}" too large to snapshot: ${files} files / ${bytes} bytes ` +
+        `(limit ${MAX_DEP_FILES} files / ${MAX_DEP_BYTES} bytes).`,
+    );
+  }
+
+  // Content-address hashes in memory (no R2 write yet) so we can compute depHash
+  // and gate persistence on the test-load verdict.
+  const manifest: Record<string, string> = {};
+  for (const [localKey, code] of Object.entries(modules)) {
+    manifest[localKey] = await sha256Hex(code);
   }
 
   const depHash = await sha256Hex(
@@ -341,6 +470,29 @@ export async function resolveDep(
     }),
   );
 
+  // Empirically confirm the snapshot loads in a workerd isolate (cached by
+  // depHash). REJECT — persisting nothing — when it doesn't.
+  const verdict = await loadable(env, depHash, entryKey, modules);
+  if (!verdict.loadable) {
+    throw new DepResolveError(
+      `package "${specifier}@${version}" is not workerd-compatible: ${verdict.reason}`,
+    );
+  }
+
+  // Loadable — now persist the content-addressed bytes + the lockfile pin.
+  for (const [localKey, code] of Object.entries(modules)) {
+    const blobHash = manifest[localKey];
+    const objKey = DEP_BLOB_PREFIX + blobHash;
+    const existing = await env.ASSETS.head(objKey);
+    if (!existing) {
+      await env.ASSETS.put(objKey, code, {
+        httpMetadata: { contentType: "text/javascript; charset=utf-8" },
+      });
+    }
+    // Warm the in-memory cache so a subsequent serve is immediate.
+    DEP_CODE_CACHE.set(blobHash, code);
+  }
+
   await upsertDep(env, specifier, version, entryKey, manifest, depHash);
 
   return {
@@ -350,8 +502,9 @@ export async function resolveDep(
     depHash,
     modules,
     manifest,
-    files: Object.keys(modules).length,
+    files,
     bytes,
+    loadable: true,
   };
 }
 
@@ -400,7 +553,7 @@ export async function assembleDeps(
 }
 
 /**
- * Build the DepSnapshot for a DRAFT bundle: for each allowlisted bare specifier
+ * Build the DepSnapshot for a DRAFT bundle: for each candidate bare specifier
  * the bundle imports, read its lockfile pin. A specifier with no pin means it was
  * never resolved (shouldn't happen post-write) and is skipped — the isolate will
  * then fail loudly on the unresolved import, which is the correct signal.
@@ -410,7 +563,7 @@ export async function draftDepSnapshot(
   bundle: Record<string, string>,
 ): Promise<DepSnapshot> {
   const snapshot: DepSnapshot = {};
-  for (const specifier of collectAllowedDepSpecifiers(bundle)) {
+  for (const specifier of collectDepSpecifiers(bundle)) {
     const entry = await getDepEntry(env, specifier);
     if (entry) snapshot[specifier] = entry;
   }

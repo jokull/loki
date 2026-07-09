@@ -21,9 +21,7 @@ import {
 } from "./store";
 import { transpileModule, buildClientBuild } from "./transpile";
 import {
-  allowedScopesDoc,
   BUILTIN_SPECIFIERS,
-  isAllowedDep,
   parseBareImports,
   resolveDep,
 } from "./deps";
@@ -154,7 +152,7 @@ export const SITE_TOOLS: SiteTool[] = [
     description:
       "Create or overwrite a site file in the draft tree. TSX/TS/JSX/JS are transpiled immediately (sucrase, preact JSX); transpile errors are returned and the write is REJECTED. Other files (styles.css, *.graphql) are stored as-is. " +
       "After a successful write, every gql`...` document in the file (and standalone *.graphql files) is VALIDATED against the live CMS schema; any problems come back in a `graphqlErrors` block (with precise messages like `Cannot query field \"x\" on type \"BlogPostRecord\". Did you mean \"y\"?`). These are NON-FATAL — the file is still saved so you can write a component before its query is finished — but fix them before publish_site, which hard-gates on the same validation. " +
-      "You may also `import` from resolver-allowlisted npm packages (currently the `drizzle-orm` scope and its subpaths): Loki resolves them via esm.sh at write time, snapshots a self-contained version-pinned copy, and returns a `resolvedDeps` block. Resolving a package for the FIRST time may take a few seconds (crawl + store); an unknown bare specifier, or one needing Node built-ins, is REJECTED. " +
+      "You may also `import` from ANY npm package (no allowlist): Loki resolves it via esm.sh at write time, snapshots a self-contained version-pinned copy, TEST-LOADS it in a throwaway workerd isolate to confirm it is supported, and returns a `resolvedDeps` block. Resolving a package for the FIRST time may take a few seconds (crawl + store + test-load). A package that is not found, too large, or not workerd-compatible (e.g. it needs a Node built-in like `node:fs`) is REJECTED with the reason and no pin is persisted. " +
       "For typed authoring, read the `schema_types` tool output and `import type { BlogPostRecord } from \"loki/schema\"`.\n\n" +
       "The file contents go in the `source` parameter (`content` is accepted as an alias).",
     inputSchema: {
@@ -194,13 +192,15 @@ export const SITE_TOOLS: SiteTool[] = [
         return errorResult(`Write rejected for ${path}:\n${clientBuild.error}`);
       }
 
-      // Dependency resolution (npm-dep spike). Detect bare specifiers this file
-      // imports. Loki built-ins (preact family, loki/runtime, loki/schema) are
-      // injected already. Allowlisted deps (drizzle-orm scope) are resolved +
-      // snapshotted via esm.sh in the supervisor NOW so the pin is recorded
-      // before publish. An unknown bare specifier, or a resolution/compat
-      // failure, REJECTS the write (like a transpile error) so the tree never
-      // holds an unresolvable import. This mirrors the write-time gql ethos.
+      // Dependency resolution (NO allowlist). Detect the bare specifiers this
+      // file imports. Loki built-ins (preact family, loki/runtime, loki/schema)
+      // are injected already; EVERY other bare specifier is a candidate npm dep.
+      // Loki resolves + snapshots it via esm.sh in the supervisor NOW and
+      // TEST-LOADS it in a throwaway isolate to empirically confirm it is
+      // workerd-compatible, so the pin is recorded before publish. A not-found,
+      // too-large, or not-workerd-loadable package (e.g. one needing a Node
+      // builtin) REJECTS the write (like a transpile error) with the reason, and
+      // no broken pin is persisted. This mirrors the write-time gql ethos.
       const resolvedDeps: Array<{
         specifier: string;
         version: string;
@@ -210,16 +210,6 @@ export const SITE_TOOLS: SiteTool[] = [
       }> = [];
       for (const specifier of parseBareImports(source)) {
         if (BUILTIN_SPECIFIERS.has(specifier)) continue;
-        if (!isAllowedDep(specifier)) {
-          return errorResult(
-            `Write rejected for ${path}: unknown import "${specifier}". ` +
-              `Allowed imports are the Loki built-ins (preact, preact/hooks, ` +
-              `preact/jsx-runtime, preact-render-to-string, loki/runtime, ` +
-              `loki/schema) and resolver-allowlisted npm packages: ` +
-              `${allowedScopesDoc()} (and their subpaths). To add a package, ` +
-              `it must be ESM and workerd-compatible without node builtins.`,
-          );
-        }
         try {
           const dep = await resolveDep(env, specifier);
           resolvedDeps.push({
@@ -231,8 +221,12 @@ export const SITE_TOOLS: SiteTool[] = [
           });
         } catch (err) {
           return errorResult(
-            `Write rejected for ${path}: could not resolve dependency ` +
-              `"${specifier}" via esm.sh:\n${err instanceof Error ? err.message : String(err)}`,
+            `Write rejected for ${path}: could not use dependency ` +
+              `"${specifier}":\n${err instanceof Error ? err.message : String(err)}\n\n` +
+              `Imports must be Loki built-ins (preact, preact/hooks, ` +
+              `preact/jsx-runtime, preact-render-to-string, loki/runtime, ` +
+              `loki/schema) or an npm package resolvable via esm.sh that loads in ` +
+              `workerd (pure ESM, no Node builtins).`,
           );
         }
       }
