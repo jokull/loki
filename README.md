@@ -1,4 +1,7 @@
-# Loftur
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.svg">
+  <img src="assets/logo.svg" alt="Loftur" width="220">
+</picture>
 
 **Vibe-code a real site. Schema and all.**
 
