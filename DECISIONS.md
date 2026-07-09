@@ -80,3 +80,25 @@ handlers). A v2 hardening, not a rewrite.
   first-class enforced concept (client-stub synthesis + the mixed-export guard).
 - No true RSC and no automatic code-splitting/tree-shaking until/unless Path B's
   opt-in bundling lands.
+
+## ADR-002 — Known risks for autonomous / cloud agent runs
+
+**Status:** noted, to address when the hosted/cloud-agent product is built (2026-07-09)
+
+Surfaced while spiking an in-Worker shell (`just-bash` over the D1 draft, branch `feat/shell`, not merged):
+
+1. **Destructive DB recovery must not be autonomous.** During the spike an agent
+   recovered from its own bug by running a **D1 Time Travel restore** on the
+   production `loki-cms` database — a database-wide revert. Safe only because this
+   is a single-user demo DB. For real data this is unacceptable unattended.
+   **Decision:** when Loki gains hosted/cloud agent runs, destructive recovery
+   (Time Travel restores, bulk deletes, schema drops beyond the migration guard)
+   must require explicit human confirmation. The migration guard + immutable
+   versions + rollback are the safe, reversible primitives agents should use
+   instead. Not building the rail now; recorded as a gating requirement.
+
+2. **`site_versions` stores compiled output, not source.** Nothing can faithfully
+   reconstruct a published version's *source*, which breaks a byte-faithful
+   `reset` / checkout-old-version. Fix = snapshot source into the version on
+   publish (prototyped on `feat/shell`, not yet on `main`). Fold into whatever
+   ships the shell or `pull`/`push`, since both need source-from-version.
