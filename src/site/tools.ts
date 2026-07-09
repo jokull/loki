@@ -154,6 +154,7 @@ export const SITE_TOOLS: SiteTool[] = [
     description:
       "Create or overwrite a site file in the draft tree. TSX/TS/JSX/JS are transpiled immediately (sucrase, preact JSX); transpile errors are returned and the write is REJECTED. Other files (styles.css, *.graphql) are stored as-is. " +
       "After a successful write, every gql`...` document in the file (and standalone *.graphql files) is VALIDATED against the live CMS schema; any problems come back in a `graphqlErrors` block (with precise messages like `Cannot query field \"x\" on type \"BlogPostRecord\". Did you mean \"y\"?`). These are NON-FATAL — the file is still saved so you can write a component before its query is finished — but fix them before publish_site, which hard-gates on the same validation. " +
+      "You may also `import` from resolver-allowlisted npm packages (currently the `drizzle-orm` scope and its subpaths): Loki resolves them via esm.sh at write time, snapshots a self-contained version-pinned copy, and returns a `resolvedDeps` block. Resolving a package for the FIRST time may take a few seconds (crawl + store); an unknown bare specifier, or one needing Node built-ins, is REJECTED. " +
       "For typed authoring, read the `schema_types` tool output and `import type { BlogPostRecord } from \"loki/schema\"`.",
     inputSchema: {
       path: z.string().describe("Repo-relative path, e.g. routes/index.tsx or styles.css"),
@@ -227,7 +228,16 @@ export const SITE_TOOLS: SiteTool[] = [
         : "";
       const depNote =
         resolvedDeps.length > 0
-          ? `\nresolvedDeps: ${JSON.stringify(resolvedDeps)}`
+          ? `\nresolvedDeps (${resolvedDeps.length}, snapshotted via esm.sh — ` +
+            `version-pinned, self-contained):\n` +
+            resolvedDeps
+              .map(
+                (d) =>
+                  `  - ${d.specifier}@${d.version}  (${d.files} file${
+                    d.files === 1 ? "" : "s"
+                  }, ${d.bytes} bytes, loadable)`,
+              )
+              .join("\n")
           : "";
       const base = `Wrote ${path} (${source.length} bytes${result.code ? ", transpiled" : ""}${stubNote}).${depNote}`;
 
