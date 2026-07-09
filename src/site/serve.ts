@@ -15,6 +15,7 @@ import { serveModule, serveVendor } from "./assets";
 import { serveStaticAsset } from "./static-assets";
 import { resolveUser, handleAuthRoute } from "../auth";
 import { logLine } from "../logs";
+import { serveUpload } from "../uploads";
 import { assembleDeps, draftDepSnapshot } from "./deps";
 import {
   DEFAULT_SITE_ID,
@@ -173,6 +174,10 @@ async function runSite(
   // Runtime logs: env.LOG.write(level, message) — surfaced via the site_logs tool.
   if (exports?.LogEntrypoint) {
     workerEnv.LOG = exports.LogEntrypoint({ props: { siteId } });
+  }
+  // End-user uploads: env.UPLOADS.put(key, base64) -> R2, served at /__uploads/<key>.
+  if (exports?.UploadsEntrypoint) {
+    workerEnv.UPLOADS = exports.UploadsEntrypoint({ props: { siteId } });
   }
   // Mediated outbound: any external fetch() the site makes is proxied + logged
   // through OutboundEntrypoint (per-site policy seam). Falls back to no network
@@ -361,6 +366,11 @@ export async function serveSite(
     // RealtimeEntrypoint.publish applies server-side).
     const id = env.CHANNELS.idFromName(`${siteId}:${channel}`);
     return env.CHANNELS.get(id).fetch(request);
+  }
+
+  // Public end-user uploads (env.UPLOADS.put -> /__uploads/<key>), served from R2.
+  if (url.pathname.startsWith("/__uploads/")) {
+    return serveUpload(env, siteId, decodeURIComponent(url.pathname.slice("/__uploads/".length)));
   }
 
   // Browser-facing island assets (served regardless of published state).

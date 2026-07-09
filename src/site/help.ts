@@ -131,8 +131,9 @@ from BOTH a loader (server) and an island (browser):
   \`env.RECORDS\`, \`env.REALTIME\`, \`env.FEATURES_SQL\`, \`env.SECRETS\` (read stored API
   keys), \`env.AUTH\` (send magic-link sign-ins), \`env.MAIL\` (send transactional
   email), \`env.LOG.write(level, message)\` (runtime logs — read them with the
-  \`site_logs\` tool), plus MEDIATED outbound \`fetch()\` to external hosts. There is
-  NO raw DB and NO Worker Loader. \`user\` is the signed-in
+  \`site_logs\` tool), \`env.UPLOADS\` (store user-uploaded files), plus MEDIATED
+  outbound \`fetch()\` to external hosts. There is NO raw DB and NO Worker Loader.
+  \`user\` is the signed-in
   end user (\`{ id, email }\`) or \`null\`. The return value is JSON-serialized to
   callers; annotate it (e.g. via
   \`import type { X } from "loki/schema"\`) so its type flows to the caller.
@@ -330,6 +331,24 @@ auth below, not this.) Returns \`{ ok, id? }\` or \`{ ok:false, error }\`.
 
 Email sends from a shared \`loftur.app\` address (the platform's verified sender).
 Provide \`fromName\` to set the display name and \`replyTo\` for replies. Server-only.
+
+## End-user uploads (env.UPLOADS)
+
+Store files a visitor uploads (avatars, images) with
+\`env.UPLOADS.put(key, base64, contentType?)\` from a serverFn. It returns
+\`{ ok, url }\` where \`url\` is \`/__uploads/<key>\` on your site — reference it in
+markup. Reads are public; \`env.UPLOADS.delete(key)\` removes a file. Gate the write
+on \`user\` (only signed-in visitors upload). Bytes cross as base64, so this is for
+avatars/images, not huge files (10 MB cap).
+
+    export const setAvatar = serverFn({ method: "POST" })
+      .validator((i: any) => ({ base64: String(i?.base64 || "") }))
+      .handler(async ({ data, env, user }) => {
+        if (!user) throw new Error("Sign in first");
+        const r = await env.UPLOADS.put(\`avatars/\${user.id}.png\`, data.base64, "image/png");
+        if (!r.ok) throw new Error(r.error);
+        return { url: r.url };   // e.g. "/__uploads/avatars/<id>.png"
+      });
 
 ## User auth (passwordless email sign-in)
 

@@ -18,6 +18,7 @@ const SUITES = [
   ...(process.env.MAIL ? [["mail  (env.MAIL transactional email)", "mail.mjs"]] : []),
   ["roles (user.role · set_user_role · list_users)", "roles.mjs"],
   ["logs  (env.LOG · site_logs · error capture)", "logs.mjs"],
+  ["uploads (env.UPLOADS · /__uploads serving)", "uploads.mjs"],
 ];
 
 function run(file) {
