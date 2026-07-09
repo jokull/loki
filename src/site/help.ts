@@ -337,8 +337,14 @@ the owner/editor MCP tokens). It's magic-link email: the user enters their email
 gets a one-time link, clicks it, and is signed in via a secure HttpOnly cookie. No
 passwords, no schema work, no config — it's always on.
 
+**Roles.** Each user has a \`role\` (default \`"member"\`). The owner sets roles with
+the \`set_user_role\` MCP tool (and lists users with \`list_users\`); the role arrives
+as \`user.role\` in every loader/serverFn, so you can gate admin pages or tiers:
+\`if (user?.role !== "admin") return { redirect: "/" }\`. Roles are free-form strings.
+For richer PROFILES (name, avatar, plan), store a feature-DB row keyed by \`user.id\`.
+
 **Reading the signed-in user.** Every loader / action / serverFn receives \`user\`:
-\`{ id, email }\` when signed in, or \`null\`. Gate content on it:
+\`{ id, email, role }\` when signed in, or \`null\`. Gate content on it:
 
     // routes/members.tsx — a members-only page
     export async function loader({ user }) {

@@ -32,11 +32,13 @@ const FROM_ADDRESS = "login@loftur.app"; // loftur.app is onboarded for Email Se
 export interface AuthUser {
   id: string;
   email: string;
+  role: string;
 }
 
 interface SessionPayload {
   sub: string;
   email: string;
+  role: string;
   exp: number;
 }
 interface MagicPayload {
@@ -80,6 +82,7 @@ async function mintSessionCookie(
   const payload: SessionPayload = {
     sub: user.id,
     email: user.email,
+    role: user.role,
     exp: Date.now() + SESSION_TTL_SEC * 1000,
   };
   const token = await signToken(
@@ -117,7 +120,7 @@ export async function resolveUser(
     cookie,
   );
   if (!payload?.sub || !payload.email) return null;
-  return { id: payload.sub, email: payload.email };
+  return { id: payload.sub, email: payload.email, role: payload.role ?? "member" };
 }
 
 // ---- magic links ------------------------------------------------------------
@@ -277,8 +280,8 @@ async function upsertUser(
 ): Promise<AuthUser> {
   const id = crypto.randomUUID();
   const stub = env.TENANT_FEATURE_DB.get(env.TENANT_FEATURE_DB.idFromName(siteId));
-  const resolvedId = await stub.authUpsertUser(email, id);
-  return { id: resolvedId, email };
+  const { id: resolvedId, role } = await stub.authUpsertUser(email, id);
+  return { id: resolvedId, email, role };
 }
 
 // ---- capability handed to the site isolate as env.AUTH ----------------------

@@ -907,6 +907,42 @@ export const SITE_TOOLS: SiteTool[] = [
     },
   },
   {
+    name: "list_users",
+    description:
+      "List this site's END USERS (people who signed in to the site via magic-link " +
+      "auth) with their id, email, and role. Owner only. Distinct from editor tokens " +
+      "(which are for content editors, not site visitors).",
+    inputSchema: {},
+    async handler(_args, { env, siteId }) {
+      const users = await featureStub(env, siteId).listUsers();
+      if (users.length === 0) return text("No users have signed in yet.");
+      return text(
+        users.map((u) => `${u.email}  ${u.role}  (${u.id})  ${u.created_at}`).join("\n"),
+      );
+    },
+  },
+  {
+    name: "set_user_role",
+    description:
+      "Set an end-user's role by email (owner only). Roles are free-form strings " +
+      "(e.g. 'admin', 'member', 'pro'); default is 'member'. The role is delivered " +
+      "to your site code as `user.role` in every loader/serverFn, so you can gate " +
+      "pages and actions on it. The user must have signed in at least once.",
+    inputSchema: {
+      email: z.string().describe("The end-user's email"),
+      role: z.string().describe("Role to assign, e.g. admin or member"),
+    },
+    async handler({ email, role }, { env, siteId }) {
+      const ok = await featureStub(env, siteId).setUserRole(
+        String(email).trim().toLowerCase(),
+        String(role).trim(),
+      );
+      return ok
+        ? text(`Set ${email} to role "${role}". Takes effect on their next sign-in.`)
+        : errorResult(`No user with email ${email} has signed in yet.`);
+    },
+  },
+  {
     name: "site_help",
     description:
       "Return the site authoring guide: routing conventions, route module shape, available imports, a full example, and the preview/publish/rollback workflow.",
