@@ -167,13 +167,14 @@ const LOADABLE_STATE_PREFIX = "deploadable:";
  */
 async function loadable(
   env: Env,
+  siteId: string,
   depHash: string,
   entryKey: string,
   modules: Record<string, string>,
 ): Promise<LoadableResult> {
   const cached = LOADABLE_CACHE.get(depHash);
   if (cached) return cached;
-  const persisted = await getState(env, LOADABLE_STATE_PREFIX + depHash);
+  const persisted = await getState(env, siteId, LOADABLE_STATE_PREFIX + depHash);
   if (persisted) {
     try {
       const parsed = JSON.parse(persisted) as LoadableResult;
@@ -208,7 +209,7 @@ async function loadable(
 
   const result = await runProbe(env, PROBE, probeModules);
   LOADABLE_CACHE.set(depHash, result);
-  await setState(env, LOADABLE_STATE_PREFIX + depHash, JSON.stringify(result));
+  await setState(env, siteId, LOADABLE_STATE_PREFIX + depHash, JSON.stringify(result));
   return result;
 }
 
@@ -425,6 +426,7 @@ async function crawlEsm(specifier: string): Promise<{
  */
 export async function resolveDep(
   env: Env,
+  siteId: string,
   specifier: string,
 ): Promise<ResolvedDep> {
   if (!isBareSpecifier(specifier)) {
@@ -472,7 +474,7 @@ export async function resolveDep(
 
   // Empirically confirm the snapshot loads in a workerd isolate (cached by
   // depHash). REJECT — persisting nothing — when it doesn't.
-  const verdict = await loadable(env, depHash, entryKey, modules);
+  const verdict = await loadable(env, siteId, depHash, entryKey, modules);
   if (!verdict.loadable) {
     throw new DepResolveError(
       `package "${specifier}@${version}" is not workerd-compatible: ${verdict.reason}`,
@@ -493,7 +495,7 @@ export async function resolveDep(
     DEP_CODE_CACHE.set(blobHash, code);
   }
 
-  await upsertDep(env, specifier, version, entryKey, manifest, depHash);
+  await upsertDep(env, siteId, specifier, version, entryKey, manifest, depHash);
 
   return {
     specifier,
@@ -560,11 +562,12 @@ export async function assembleDeps(
  */
 export async function draftDepSnapshot(
   env: Env,
+  siteId: string,
   bundle: Record<string, string>,
 ): Promise<DepSnapshot> {
   const snapshot: DepSnapshot = {};
   for (const specifier of collectDepSpecifiers(bundle)) {
-    const entry = await getDepEntry(env, specifier);
+    const entry = await getDepEntry(env, siteId, specifier);
     if (entry) snapshot[specifier] = entry;
   }
   return snapshot;

@@ -322,12 +322,29 @@ no raw SQL, no driver boilerplate:
         return db.select().from(signups).all();   // .get() for a single row
       });
 
+### Designing the feature schema (feature_migrate)
+
+You OWN this database — create and evolve its tables at runtime with three tools:
+- \`feature_migrate({ name, up })\` — apply ONE named, versioned migration. \`name\`
+  is a stable id (e.g. \`0001_create_signups\`); \`up\` is SQL (CREATE TABLE / ALTER
+  TABLE / CREATE INDEX; \`;\`-separate multiple statements). IDEMPOTENT — a name
+  already applied is skipped, so re-running is safe. Returns the resulting schema.
+- \`feature_schema()\` — show the current tables + columns. Read it before writing
+  queries so your drizzle table defs match.
+- \`feature_query({ sql, params?, write? })\` — run one SQL statement for INSPECTION
+  or SEEDING (reads → { columns, rows }; \`write:true\` for INSERT/UPDATE/DELETE).
+  NOT the request hot path — your app code uses drizzle over \`env.FEATURES_SQL\`.
+
+    feature_migrate({ name: "0001_signups",
+      up: "CREATE TABLE signups (id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)" })
+
+Each site's feature DB is FULLY ISOLATED (its own SQLite). Types: INTEGER, TEXT,
+REAL, BLOB. GOTCHA: for a timestamp default use \`DEFAULT CURRENT_TIMESTAMP\`, NOT
+\`DEFAULT (datetime('now'))\` — the latter is a non-constant default and is rejected.
+
 CRITICAL — read before using:
-- (a) TABLES ARE NOT CREATED BY LOKI. The feature-DB schema is managed
-  OUT-OF-BAND by the site owner (drizzle-kit / atlas against the features DB).
-  There is NO migration/table-creation path here — Loki provides QUERY access
-  only. Your drizzle table definitions must MATCH the columns that already exist,
-  or queries fail at runtime. (Ask the owner / inspect the real schema first.)
+- (a) CREATE TABLES with \`feature_migrate\` FIRST, then query them with drizzle.
+  Call \`feature_schema()\` to confirm the columns your drizzle table defs must match.
 - (b) OMIT DB-DEFAULTED COLUMNS (like \`created_at TEXT DEFAULT ...\`) from your
   drizzle table, OR give them \`.default(...)\`. If you declare such a column with
   no default and don't set it on insert, drizzle inserts an explicit \`NULL\`,

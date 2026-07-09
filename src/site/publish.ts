@@ -14,11 +14,12 @@ import {
   type IntrospectionQuery,
 } from "graphql";
 import type { Env } from "../env";
-import { getCms } from "../env";
+import { cmsExecuteFor } from "../cms-dispatch";
 import { buildDraftBundle, smokeRender } from "./serve";
 import { draftDepSnapshot } from "./deps";
 import { buildClientBuild, isTranspilable } from "./transpile";
 import {
+  DEFAULT_SITE_ID,
   buildDraftAssetManifest,
   insertVersion,
   listFiles,
@@ -75,8 +76,8 @@ export function extractDocsFromFile(path: string, source: string): ExtractedDoc[
 }
 
 /** Extract every GraphQL document from the draft: gql`` templates + *.graphql. */
-export async function extractDocuments(env: Env): Promise<ExtractedDoc[]> {
-  const files = await listFiles(env);
+export async function extractDocuments(env: Env, siteId: string): Promise<ExtractedDoc[]> {
+  const files = await listFiles(env, siteId);
   const docs: ExtractedDoc[] = [];
   for (const file of files) {
     docs.push(...extractDocsFromFile(file.path, file.source));
@@ -84,13 +85,12 @@ export async function extractDocuments(env: Env): Promise<ExtractedDoc[]> {
   return docs;
 }
 
-export async function introspectSchema(env: Env): Promise<GraphQLSchema> {
-  const cms = getCms(env);
-  const result = await cms.execute(getIntrospectionQuery());
+export async function introspectSchema(env: Env, siteId: string): Promise<GraphQLSchema> {
+  const result = await cmsExecuteFor(env, siteId, getIntrospectionQuery(), {}, false);
   if (result.errors && result.errors.length) {
     throw new Error(
       "Schema introspection failed: " +
-        result.errors.map((e) => e.message).join("; "),
+        result.errors.map((e: { message: string }) => e.message).join("; "),
     );
   }
   return buildClientSchema(result.data as unknown as IntrospectionQuery);
@@ -189,8 +189,9 @@ function namedTypeName(type: unknown): string | null {
  */
 export async function validateSiteConfig(
   env: Env,
+  siteId: string,
 ): Promise<{ ok: true; models: string[] } | { ok: false; error: string }> {
-  const file = await readFile(env, "loki.config.json");
+  const file = await readFile(env, siteId, "loki.config.json");
   if (!file) return { ok: true, models: [] };
 
   let cfg: unknown;
@@ -217,10 +218,19 @@ export async function validateSiteConfig(
   }
   if (wm.length === 0) return { ok: true, models: [] };
 
-  const { results } = await env.DB.prepare(
-    "SELECT api_key FROM models",
-  ).all<{ api_key: string }>();
-  const known = new Set((results ?? []).map((r) => r.api_key));
+  // Model list is per-site: default site → shared D1; tenant → its own CMS (DO).
+  let modelKeys: string[];
+  if (siteId === DEFAULT_SITE_ID) {
+    const { results } = await env.DB.prepare(
+      "SELECT api_key FROM models",
+    ).all<{ api_key: string }>();
+    modelKeys = (results ?? []).map((r) => r.api_key);
+  } else {
+    modelKeys = await env.TENANT_DB.get(
+      env.TENANT_DB.idFromName(siteId),
+    ).modelApiKeys();
+  }
+  const known = new Set(modelKeys);
   const missing = (wm as string[]).filter((m) => !known.has(m));
   if (missing.length) {
     return {
@@ -287,15 +297,16 @@ function scanMissingAssetRefs(
 export async function publishSite(
   env: Env,
   ctx: ExecutionContext,
+  siteId: string,
   message: string | null,
 ): Promise<PublishResult> {
   // (a) extract documents from the draft
-  const docs = await extractDocuments(env);
+  const docs = await extractDocuments(env, siteId);
 
   // (b) validate against the live schema
   let schema: GraphQLSchema;
   try {
-    schema = await introspectSchema(env);
+    schema = await introspectSchema(env, siteId);
   } catch (err) {
     return {
       ok: false,
@@ -316,7 +327,7 @@ export async function publishSite(
   }
 
   // (b2) validate loki.config.json (writableModels must reference real models)
-  const config = await validateSiteConfig(env);
+  const config = await validateSiteConfig(env, siteId);
   if (!config.ok) {
     return { ok: false, stage: "config-validation", error: config.error };
   }
@@ -325,7 +336,7 @@ export async function publishSite(
   // transpile (compiled === null) for filesystem fidelity; such a file must never
   // publish. (site_write can't produce this — it rejects on transpile error — so
   // this only trips on a shell-landed broken write.)
-  const broken = (await listFiles(env)).filter(
+  const broken = (await listFiles(env, siteId)).filter(
     (f) => isTranspilable(f.path) && f.compiled === null,
   );
   if (broken.length) {
@@ -342,7 +353,7 @@ export async function publishSite(
   const footprint = computeFootprint(schema, docs);
 
   // (d) smoke render "/" from the draft bundle
-  const bundle = await buildDraftBundle(env);
+  const bundle = await buildDraftBundle(env, siteId);
   if (Object.keys(bundle).length === 0) {
     return {
       ok: false,
@@ -351,7 +362,7 @@ export async function publishSite(
     };
   }
   try {
-    const res = await smokeRender(env, ctx, bundle);
+    const res = await smokeRender(env, ctx, siteId, bundle);
     if (res.status >= 500) {
       const body = await res.text();
       return {
@@ -373,7 +384,7 @@ export async function publishSite(
   // collision in a file written before client stubs existed — a serverFn module
   // that leaks non-serverFn exports must not publish.
   const clientBundle: Record<string, string> = {};
-  for (const f of await listFiles(env)) {
+  for (const f of await listFiles(env, siteId)) {
     const built = buildClientBuild(f.path, f.source);
     if (!built.ok) {
       return { ok: false, stage: "client-build", error: built.error! };
@@ -383,25 +394,26 @@ export async function publishSite(
 
   // (e) snapshot the draft asset manifest (blobs already live in R2, so this is
   // just a path->{hash,contentType,size} map; publish/rollback swap manifests).
-  const assetManifest = await buildDraftAssetManifest(env);
+  const assetManifest = await buildDraftAssetManifest(env, siteId);
   const warnings = scanMissingAssetRefs(
-    (await listFiles(env)).map((f) => ({ path: f.path, source: f.source })),
+    (await listFiles(env, siteId)).map((f) => ({ path: f.path, source: f.source })),
     assetManifest,
   );
 
   // (e2) snapshot the resolved npm-dep pins so published/preview/rollback all
   // serve identical, version-pinned esm.sh bytes (the blobs already live in R2).
-  const deps = await draftDepSnapshot(env, bundle);
+  const deps = await draftDepSnapshot(env, siteId, bundle);
 
   // (e3) snapshot the exact authored source (path -> source). This is what makes
   // a version faithfully reconstructable: rollback/reset restore SOURCE, not just
   // the compiled bundle. See migrations/0006_source_in_versions.sql.
   const sourceBundle: Record<string, string> = {};
-  for (const f of await listFiles(env)) sourceBundle[f.path] = f.source;
+  for (const f of await listFiles(env, siteId)) sourceBundle[f.path] = f.source;
 
   // (f) snapshot + repoint
   const versionId = await insertVersion(
     env,
+    siteId,
     message,
     bundle,
     footprint,
@@ -410,7 +422,7 @@ export async function publishSite(
     deps,
     sourceBundle,
   );
-  await setState(env, "published_version", String(versionId));
+  await setState(env, siteId, "published_version", String(versionId));
 
   return {
     ok: true,

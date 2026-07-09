@@ -17,12 +17,15 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
 import type { Env } from "./env";
 import { callCmsTool, type McpToolResult } from "./cms-bridge";
+import { DEFAULT_SITE_ID } from "./site/store";
 
 export type RecordCreateResult = { id: string } | { error: string };
 
 interface RecordsProps {
   /** Model api_keys the serving tree allows writes to (loki.config.json). */
   allowlist?: string[];
+  /** Site whose CMS the writes route to (default site => shared CMS). */
+  siteId?: string;
 }
 
 /** Join an MCP result's text content into a single legible error string. */
@@ -56,7 +59,17 @@ function extractRecordId(result: McpToolResult): string | null {
   return null;
 }
 
-async function modelHasDraft(env: Env, modelApiKey: string): Promise<boolean> {
+async function modelHasDraft(
+  env: Env,
+  siteId: string,
+  modelApiKey: string,
+): Promise<boolean> {
+  // Per-site: the default site's models live in the shared D1; a tenant's live
+  // in its own TenantDB SQLite.
+  if (siteId !== DEFAULT_SITE_ID) {
+    const stub = env.TENANT_DB.get(env.TENANT_DB.idFromName(siteId));
+    return await stub.modelHasDraft(modelApiKey);
+  }
   const row = await env.DB.prepare(
     "SELECT has_draft FROM models WHERE api_key = ?",
   )
@@ -76,6 +89,7 @@ export class RecordsEntrypoint extends WorkerEntrypoint<Env, RecordsProps> {
     fields: Record<string, unknown>,
   ): Promise<RecordCreateResult> {
     const allowlist = this.ctx.props?.allowlist ?? [];
+    const siteId = this.ctx.props?.siteId ?? DEFAULT_SITE_ID;
     if (!allowlist.includes(modelApiKey)) {
       return {
         error:
@@ -87,7 +101,7 @@ export class RecordsEntrypoint extends WorkerEntrypoint<Env, RecordsProps> {
 
     let created: McpToolResult;
     try {
-      created = await callCmsTool(this.env, "create_record", {
+      created = await callCmsTool(this.env, siteId, "create_record", {
         modelApiKey,
         data: fields ?? {},
       });
@@ -105,10 +119,10 @@ export class RecordsEntrypoint extends WorkerEntrypoint<Env, RecordsProps> {
 
     // Draft-enabled models create as draft; publish so published GraphQL sees it.
     // (Required-field validation for draft models is enforced here, at publish.)
-    if (await modelHasDraft(this.env, modelApiKey)) {
+    if (await modelHasDraft(this.env, siteId, modelApiKey)) {
       let published: McpToolResult;
       try {
-        published = await callCmsTool(this.env, "set_publish_status", {
+        published = await callCmsTool(this.env, siteId, "set_publish_status", {
           action: "publish",
           modelApiKey,
           recordIds: [id],

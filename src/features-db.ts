@@ -20,6 +20,7 @@
 
 import { WorkerEntrypoint } from "cloudflare:workers";
 import type { Env } from "./env";
+import { DEFAULT_SITE_ID } from "./site/store";
 
 export type SqlMethod = "run" | "all" | "get" | "values";
 
@@ -55,5 +56,28 @@ export class FeaturesDbEntrypoint extends WorkerEntrypoint<Env> {
     }
     // all | values
     return { rows };
+  }
+}
+
+/**
+ * Per-tenant feature-DB capability: the same narrow `exec` contract, but backed
+ * by the tenant's TenantDB SQLite (not the shared FEATURES_DB). Wired into a
+ * tenant site isolate as `env.FEATURES_SQL` with `siteId` in props, so a tenant
+ * serverFn's Drizzle queries hit ITS OWN isolated tables.
+ */
+export class TenantFeaturesEntrypoint extends WorkerEntrypoint<
+  Env,
+  { siteId?: string }
+> {
+  async exec(
+    sql: string,
+    params: unknown[] = [],
+    method: SqlMethod = "all",
+  ): Promise<SqlExecResult> {
+    const siteId = this.ctx.props?.siteId ?? DEFAULT_SITE_ID;
+    const stub = this.env.TENANT_FEATURE_DB.get(
+      this.env.TENANT_FEATURE_DB.idFromName(siteId),
+    );
+    return await stub.exec(sql, params, method);
   }
 }

@@ -35,7 +35,7 @@ import {
   type IntrospectionQuery,
 } from "graphql";
 import type { Env } from "../env";
-import { getCms } from "../env";
+import { cmsExecuteFor } from "../cms-dispatch";
 
 // ---- scalar mapping ---------------------------------------------------------
 
@@ -225,12 +225,12 @@ async function readSchemaVersion(env: Env): Promise<number> {
   }
 }
 
-async function introspect(env: Env): Promise<GraphQLSchema> {
-  const result = await getCms(env).execute(getIntrospectionQuery());
+async function introspect(env: Env, siteId: string): Promise<GraphQLSchema> {
+  const result = await cmsExecuteFor(env, siteId, getIntrospectionQuery(), {}, false);
   if (result.errors && result.errors.length) {
     throw new Error(
       "Schema introspection failed: " +
-        result.errors.map((e) => e.message).join("; "),
+        result.errors.map((e: { message: string }) => e.message).join("; "),
     );
   }
   return buildClientSchema(result.data as unknown as IntrospectionQuery);
@@ -248,18 +248,21 @@ interface SchemaCacheEntry {
   checkedAt: number;
 }
 
-let schemaCache: SchemaCacheEntry | null = null;
+// Per-site cache: tenants must never share each other's schema/types, so every
+// entry is keyed by siteId (not one module-global var).
+const schemaCache = new Map<string, SchemaCacheEntry>();
 
 /**
- * Return the live schema + its generated TS, cached per-isolate and keyed on
- * `_cms_meta.schema_version`. Both the write-time gql validator and the
+ * Return the live schema + its generated TS, cached per-isolate PER SITE and
+ * keyed on `_cms_meta.schema_version`. Both the write-time gql validator and the
  * `schema_types` tool go through here so they share one introspection.
  */
 export async function getSchemaBundle(
   env: Env,
+  siteId: string,
 ): Promise<{ schema: GraphQLSchema; ts: string; version: number }> {
   const now = Date.now();
-  const cached = schemaCache;
+  const cached = schemaCache.get(siteId);
   if (cached && now - cached.checkedAt < VERSION_TTL_MS) {
     return cached;
   }
@@ -268,8 +271,9 @@ export async function getSchemaBundle(
     cached.checkedAt = now;
     return cached;
   }
-  const schema = await introspect(env);
+  const schema = await introspect(env, siteId);
   const ts = generateSchemaTypes(schema, version);
-  schemaCache = { version, schema, ts, checkedAt: now };
-  return schemaCache;
+  const entry: SchemaCacheEntry = { version, schema, ts, checkedAt: now };
+  schemaCache.set(siteId, entry);
+  return entry;
 }

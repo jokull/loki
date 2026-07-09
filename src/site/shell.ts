@@ -73,6 +73,7 @@ export interface ShellResult {
  */
 async function commitDraftFile(
   env: Env,
+  siteId: string,
   path: string,
   source: string,
 ): Promise<string[]> {
@@ -99,7 +100,7 @@ async function commitDraftFile(
     for (const specifier of parseBareImports(source)) {
       if (BUILTIN_SPECIFIERS.has(specifier)) continue;
       try {
-        await resolveDep(env, specifier);
+        await resolveDep(env, siteId, specifier);
       } catch (err) {
         warnings.push(
           `${path}: dependency "${specifier}" could not be resolved:\n    ${
@@ -110,13 +111,13 @@ async function commitDraftFile(
     }
   }
 
-  await writeFile(env, path, source, compiled, clientCompiled);
+  await writeFile(env, siteId, path, source, compiled, clientCompiled);
 
   // Write-time gql validation (non-fatal), identical to site_write.
   const docs = extractDocsFromFile(path, source);
   if (docs.length > 0) {
     try {
-      const { schema } = await getSchemaBundle(env);
+      const { schema } = await getSchemaBundle(env, siteId);
       const problems = validateDocuments(schema, docs);
       for (const p of problems) {
         warnings.push(`${path} (graphql ${p.source}): ${p.errors.join("; ")}`);
@@ -133,10 +134,10 @@ async function commitDraftFile(
  * through the transpile/validate/dep pipeline. Live-through: the draft is mutated
  * in place and is the persistent working copy between calls.
  */
-export async function runShell(env: Env, command: string): Promise<ShellResult> {
+export async function runShell(env: Env, siteId: string, command: string): Promise<ShellResult> {
   // 1. Hydrate a fresh in-memory FS from the current draft.
-  const files = await listFiles(env);
-  const assets = await listAssets(env);
+  const files = await listFiles(env, siteId);
+  const assets = await listAssets(env, siteId);
   const seed: Record<string, string> = {};
   const baseline = new Map<string, string>(); // mounted path -> source
   for (const f of files) {
@@ -218,7 +219,7 @@ export async function runShell(env: Env, command: string): Promise<ShellResult> 
     }
     const prev = baseline.get(mounted);
     if (prev === undefined || prev !== content) {
-      warnings.push(...(await commitDraftFile(env, rp, content)));
+      warnings.push(...(await commitDraftFile(env, siteId, rp, content)));
       changedFiles.push(rp);
     }
   }
@@ -227,7 +228,7 @@ export async function runShell(env: Env, command: string): Promise<ShellResult> 
   for (const [mounted] of baseline) {
     if (!seenMounted.has(mounted)) {
       const rp = repoPath(mounted)!;
-      await deleteFile(env, rp);
+      await deleteFile(env, siteId, rp);
       deletedFiles.push(rp);
     }
   }
@@ -249,19 +250,20 @@ export async function runShell(env: Env, command: string): Promise<ShellResult> 
  */
 export async function resetDraft(
   env: Env,
+  siteId: string,
 ): Promise<
   | { ok: true; restoredFiles: number; restoredAssets: number; faithful: boolean }
   | { ok: false; error: string }
 > {
-  const versionId = await getPublishedVersionId(env);
+  const versionId = await getPublishedVersionId(env, siteId);
   if (versionId == null) {
     return { ok: false, error: "No published version to reset to." };
   }
-  const version = await getVersion(env, versionId);
+  const version = await getVersion(env, siteId, versionId);
   if (!version) {
     return { ok: false, error: `Published version v${versionId} is missing.` };
   }
-  const r = await restoreDraftFromVersion(env, version);
+  const r = await restoreDraftFromVersion(env, siteId, version);
   return {
     ok: true,
     faithful: r.compiledFallbackPaths.length === 0,

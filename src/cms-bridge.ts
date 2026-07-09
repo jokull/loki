@@ -9,7 +9,7 @@
 // We call `cms.fetch(new Request("http://internal/mcp", ...))` in-process with
 // the WRITE_KEY bearer; the CMS tool list is cached per isolate.
 
-import { getCms } from "./env";
+import { cmsFetchFor } from "./cms-dispatch";
 import type { Env } from "./env";
 
 export interface McpTool {
@@ -33,6 +33,7 @@ let rpcId = 0;
 
 async function cmsRpc(
   env: Env,
+  siteId: string,
   method: string,
   params: unknown,
 ): Promise<unknown> {
@@ -47,7 +48,7 @@ async function cmsRpc(
     },
     body,
   });
-  const res = await getCms(env).fetch(request);
+  const res = await cmsFetchFor(env, siteId, request);
   const text = await res.text();
   if (!res.ok && !text) {
     throw new Error(`CMS /mcp returned HTTP ${res.status}`);
@@ -100,9 +101,9 @@ function parseRpcResponse(text: string, contentType: string): RpcMessage | null 
   return parsed as RpcMessage;
 }
 
-export async function listCmsTools(env: Env): Promise<McpTool[]> {
+export async function listCmsTools(env: Env, siteId: string): Promise<McpTool[]> {
   if (cachedTools) return cachedTools;
-  const result = (await cmsRpc(env, "tools/list", {})) as {
+  const result = (await cmsRpc(env, siteId, "tools/list", {})) as {
     tools?: McpTool[];
   };
   cachedTools = result?.tools ?? [];
@@ -111,10 +112,11 @@ export async function listCmsTools(env: Env): Promise<McpTool[]> {
 
 export async function callCmsTool(
   env: Env,
+  siteId: string,
   name: string,
   args: unknown,
 ): Promise<McpToolResult> {
-  const result = (await cmsRpc(env, "tools/call", {
+  const result = (await cmsRpc(env, siteId, "tools/call", {
     name,
     arguments: args ?? {},
   })) as McpToolResult;

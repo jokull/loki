@@ -7,11 +7,16 @@
   "vars": {
     "ENVIRONMENT": "production"
   },
+  "workers_dev": true,
+  "routes": [
+    { "pattern": "loftur.app", "custom_domain": true },
+    { "pattern": "*.loftur.app/*", "zone_name": "loftur.app" }
+  ],
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "loki-cms",
-      "database_id": "28979086-bf7d-4a94-91f9-4ca0c5c36db2",
+      "database_name": "loftur-db",
+      "database_id": "20c00d09-bc49-4fe6-b09c-45e05131f34d",
       "migrations_dir": "migrations"
     },
     {
@@ -36,6 +41,14 @@
       {
         "name": "CHANNELS",
         "class_name": "ChannelDO"
+      },
+      {
+        "name": "TENANT_DB",
+        "class_name": "TenantDB"
+      },
+      {
+        "name": "TENANT_FEATURE_DB",
+        "class_name": "TenantFeatureDB"
       }
     ]
   },
@@ -43,6 +56,14 @@
     {
       "tag": "v1",
       "new_sqlite_classes": ["ChannelDO"]
+    },
+    {
+      "tag": "v2",
+      "new_sqlite_classes": ["TenantDB"]
+    },
+    {
+      "tag": "v3",
+      "new_sqlite_classes": ["TenantFeatureDB"]
     }
   ]
 }

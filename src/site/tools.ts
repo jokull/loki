@@ -2,7 +2,7 @@
 
 import { z } from "zod";
 import type { Env } from "../env";
-import { getCms } from "../env";
+import { cmsExecuteFor } from "../cms-dispatch";
 import {
   buildDraftAssetManifest,
   deleteAsset,
@@ -35,6 +35,7 @@ import {
 import { getSchemaBundle } from "./schema-types";
 import { runShell, resetDraft, formatShellResult } from "./shell";
 import { SITE_HELP } from "./help";
+import { siteOrigin } from "../tenants";
 import type { Bundle } from "./bundle";
 import {
   assetServingUrl,
@@ -78,6 +79,7 @@ const SITE_ORIGIN = "https://loki.solberg.workers.dev";
 export interface ToolCtx {
   env: Env;
   ctx: ExecutionContext;
+  siteId: string;
 }
 
 export interface SiteToolResult {
@@ -90,6 +92,25 @@ function text(t: string): SiteToolResult {
 }
 function errorResult(t: string): SiteToolResult {
   return { content: [{ type: "text", text: t }], isError: true };
+}
+
+/** The tenant's feature-DB Durable Object stub for this site. */
+function featureStub(env: Env, siteId: string) {
+  return env.TENANT_FEATURE_DB.get(env.TENANT_FEATURE_DB.idFromName(siteId));
+}
+
+/** Render a feature schema (tables → columns) as a compact text block. */
+function formatSchema(schema: Record<string, Array<{ name: string; type: string; notnull: boolean; pk: boolean }>>): string {
+  const tables = Object.keys(schema);
+  if (tables.length === 0) return "(no feature tables yet)";
+  return tables
+    .map((t) => {
+      const cols = schema[t]
+        .map((c) => `${c.name} ${c.type}${c.pk ? " PK" : ""}${c.notnull ? " NOT NULL" : ""}`)
+        .join(", ");
+      return `- ${t}(${cols})`;
+    })
+    .join("\n");
 }
 
 export interface SiteTool {
@@ -122,10 +143,14 @@ export const SITE_TOOLS: SiteTool[] = [
         .optional()
         .describe("Include draft (unpublished) content; defaults to false"),
     },
-    async handler({ query, variables, includeDrafts }, { env }) {
-      const result = await getCms(env).execute(query, variables ?? {}, {
-        includeDrafts: includeDrafts ?? false,
-      });
+    async handler({ query, variables, includeDrafts }, { env, siteId }) {
+      const result = await cmsExecuteFor(
+        env,
+        siteId,
+        query,
+        variables ?? {},
+        includeDrafts ?? false,
+      );
       return text(JSON.stringify(result, null, 2));
     },
   },
@@ -144,8 +169,8 @@ export const SITE_TOOLS: SiteTool[] = [
       "SAME types importable as `import type { BlogPostRecord, Query } from \"loki/schema\"` " +
       "to annotate loaders and props. Regenerates automatically when the schema changes.",
     inputSchema: {},
-    async handler(_args, { env }) {
-      const { ts, version } = await getSchemaBundle(env);
+    async handler(_args, { env, siteId }) {
+      const { ts, version } = await getSchemaBundle(env, siteId);
       return text(`// schema_version: ${version}\n${ts}`);
     },
   },
@@ -168,7 +193,7 @@ export const SITE_TOOLS: SiteTool[] = [
         .optional()
         .describe("Alias for `source` — full file contents"),
     },
-    async handler({ path, source, content }, { env }) {
+    async handler({ path, source, content }, { env, siteId }) {
       if (source != null && content != null && source !== content) {
         return errorResult(
           "site_write: pass the file contents in `source` OR `content`, not both " +
@@ -213,7 +238,7 @@ export const SITE_TOOLS: SiteTool[] = [
       for (const specifier of parseBareImports(source)) {
         if (BUILTIN_SPECIFIERS.has(specifier)) continue;
         try {
-          const dep = await resolveDep(env, specifier);
+          const dep = await resolveDep(env, siteId, specifier);
           resolvedDeps.push({
             specifier: dep.specifier,
             version: dep.version,
@@ -235,6 +260,7 @@ export const SITE_TOOLS: SiteTool[] = [
 
       await writeFile(
         env,
+        siteId,
         path,
         source,
         result.code ?? null,
@@ -266,7 +292,7 @@ export const SITE_TOOLS: SiteTool[] = [
       if (docs.length === 0) return text(base);
       let problems;
       try {
-        const { schema } = await getSchemaBundle(env);
+        const { schema } = await getSchemaBundle(env, siteId);
         problems = validateDocuments(schema, docs);
       } catch (err) {
         return text(
@@ -305,7 +331,7 @@ export const SITE_TOOLS: SiteTool[] = [
         .describe("public/… path, e.g. public/img/hero.jpg (serves at /img/hero.jpg)"),
       url: z.string().describe("Source URL to fetch (http/https)"),
     },
-    async handler({ path, url }, { env }) {
+    async handler({ path, url }, { env, siteId }) {
       const check = checkAssetPath(path);
       if (!check.ok) return errorResult(check.error!);
       if (!/^https?:\/\//i.test(url)) {
@@ -325,7 +351,7 @@ export const SITE_TOOLS: SiteTool[] = [
       const bytes = new Uint8Array(await res.arrayBuffer());
       if (bytes.length === 0) return errorResult(`${url} returned an empty body.`);
       const contentType = resolveContentType(res.headers.get("content-type"), path);
-      const stored = await storeAsset(env, path, bytes, contentType);
+      const stored = await storeAsset(env, siteId, path, bytes, contentType);
       return jsonText(stored);
     },
   },
@@ -351,7 +377,7 @@ export const SITE_TOOLS: SiteTool[] = [
         .optional()
         .describe("MIME type; inferred from the extension if omitted"),
     },
-    async handler({ path, base64, contentType }, { env }) {
+    async handler({ path, base64, contentType }, { env, siteId }) {
       const check = checkAssetPath(path);
       if (!check.ok) return errorResult(check.error!);
       let bytes: Uint8Array;
@@ -370,7 +396,7 @@ export const SITE_TOOLS: SiteTool[] = [
       }
       const explicit = contentType && contentType.trim();
       const ct = explicit ? contentType.trim() : inferContentType(path);
-      const stored = await storeAsset(env, path, bytes, ct);
+      const stored = await storeAsset(env, siteId, path, bytes, ct);
       // If we had to fall back to octet-stream from the extension, flag it so the
       // agent knows to pass an explicit contentType (browsers won't render it).
       if (!explicit && ct === OCTET_STREAM) {
@@ -393,9 +419,9 @@ export const SITE_TOOLS: SiteTool[] = [
       "(public/… path) this returns JSON metadata (hash, size, contentType, " +
       "serving url) — NOT the raw bytes.",
     inputSchema: { path: z.string() },
-    async handler({ path }, { env }) {
+    async handler({ path }, { env, siteId }) {
       if (path.startsWith(PUBLIC_PREFIX)) {
-        const asset = await readAsset(env, path);
+        const asset = await readAsset(env, siteId, path);
         if (!asset) return errorResult(`No such asset: ${path}`);
         return jsonText({
           path: asset.path,
@@ -408,7 +434,7 @@ export const SITE_TOOLS: SiteTool[] = [
           note: "Binary asset — bytes are served at `url`, not returned here.",
         });
       }
-      const file = await readFile(env, path);
+      const file = await readFile(env, siteId, path);
       if (!file) return errorResult(`No such file: ${path}`);
       return text(file.source);
     },
@@ -419,9 +445,9 @@ export const SITE_TOOLS: SiteTool[] = [
       "List the draft tree: code files (with sizes/update times) AND static " +
       "assets (marked, with size/contentType/serving url).",
     inputSchema: {},
-    async handler(_args, { env }) {
-      const files = await listFiles(env);
-      const assets = await listAssets(env);
+    async handler(_args, { env, siteId }) {
+      const files = await listFiles(env, siteId);
+      const assets = await listAssets(env, siteId);
       if (files.length === 0 && assets.length === 0) {
         return text("(draft tree is empty)");
       }
@@ -454,14 +480,14 @@ export const SITE_TOOLS: SiteTool[] = [
     description:
       "Delete a file or asset from the draft tree (public/… paths delete the asset entry).",
     inputSchema: { path: z.string() },
-    async handler({ path }, { env }) {
+    async handler({ path }, { env, siteId }) {
       if (path.startsWith(PUBLIC_PREFIX)) {
-        const ok = await deleteAsset(env, path);
+        const ok = await deleteAsset(env, siteId, path);
         return ok
           ? text(`Deleted asset ${path}.`)
           : errorResult(`No such asset: ${path}`);
       }
-      const ok = await deleteFile(env, path);
+      const ok = await deleteFile(env, siteId, path);
       return ok ? text(`Deleted ${path}.`) : errorResult(`No such file: ${path}`);
     },
   },
@@ -470,14 +496,14 @@ export const SITE_TOOLS: SiteTool[] = [
     description:
       "Show how the draft tree differs from the currently published version: added, removed, and changed paths (comparing deployed/compiled form).",
     inputSchema: {},
-    async handler(_args, { env }) {
-      const draft = await buildDraftBundle(env);
-      const draftAssets = await buildDraftAssetManifest(env);
-      const versionId = await getPublishedVersionId(env);
+    async handler(_args, { env, siteId }) {
+      const draft = await buildDraftBundle(env, siteId);
+      const draftAssets = await buildDraftAssetManifest(env, siteId);
+      const versionId = await getPublishedVersionId(env, siteId);
       let published: Bundle = {};
       let publishedAssets: AssetManifest = {};
       if (versionId != null) {
-        const v = await getVersion(env, versionId);
+        const v = await getVersion(env, siteId, versionId);
         if (v) {
           published = JSON.parse(v.bundle) as Bundle;
           publishedAssets = versionAssetManifest(v);
@@ -535,17 +561,21 @@ export const SITE_TOOLS: SiteTool[] = [
       "the path with the same jar (the draft rebuilds every request); mint a new token " +
       "only once the 30 min lapses.",
     inputSchema: {},
-    async handler(_args, { env }) {
+    async handler(_args, { env, siteId }) {
       const token = crypto.randomUUID().replace(/-/g, "");
       const expires = Date.now() + 30 * 60 * 1000;
-      await setState(env, "preview_token", JSON.stringify({ token, expires }));
-      const url = `${SITE_ORIGIN}/__preview?token=${token}`;
+      await setState(env, siteId, "preview_token", JSON.stringify({ token, expires }));
+      // Preview must be served from THIS site's own origin (its subdomain) so the
+      // Host resolves to the right tenant; the workers.dev origin is the default
+      // site's fallback only.
+      const origin = await siteOrigin(env, siteId, SITE_ORIGIN);
+      const url = `${origin}/__preview?token=${token}`;
       return text(
         `Preview ready (valid 30 min):\n${url}\n\n` +
           `Browser: open it — sets the HttpOnly cookie \`loki_preview\` and redirects to /.\n` +
           `Programmatic (curl -c jar -b jar / fetch with a cookie jar):\n` +
           `  1. GET ${url}  (follow the 302; stores the loki_preview cookie)\n` +
-          `  2. GET ${SITE_ORIGIN}/<any draft path>  reusing the jar -> draft HTML\n` +
+          `  2. GET ${origin}/<any draft path>  reusing the jar -> draft HTML\n` +
           `The token lasts 30 min and is independent of edits: after more site_write calls, ` +
           `just re-request with the same jar (no new token needed until it expires).`,
       );
@@ -558,8 +588,8 @@ export const SITE_TOOLS: SiteTool[] = [
     inputSchema: {
       message: z.string().optional().describe("Optional changelog message"),
     },
-    async handler({ message }, { env, ctx }) {
-      const result = await publishSite(env, ctx, message ?? null);
+    async handler({ message }, { env, ctx, siteId }) {
+      const result = await publishSite(env, ctx, siteId, message ?? null);
       if (!result.ok) {
         return errorResult(`Publish failed at ${result.stage}:\n${result.error}`);
       }
@@ -583,11 +613,11 @@ export const SITE_TOOLS: SiteTool[] = [
       "restore the draft working tree to that version's exact authored source " +
       "(site_diff is clean afterward). Discards any uncommitted draft edits.",
     inputSchema: { version_id: z.number().int().positive() },
-    async handler({ version_id }, { env }) {
-      const v = await getVersion(env, version_id);
+    async handler({ version_id }, { env, siteId }) {
+      const v = await getVersion(env, siteId, version_id);
       if (!v) return errorResult(`No such version: ${version_id}`);
-      const restored = await restoreDraftFromVersion(env, v);
-      await setState(env, "published_version", String(version_id));
+      const restored = await restoreDraftFromVersion(env, siteId, v);
+      await setState(env, siteId, "published_version", String(version_id));
       const warn = restored.compiledFallbackPaths.length
         ? `\nNote: v${version_id} predates source snapshots; ${restored.compiledFallbackPaths.length} ` +
           `file(s) were restored from their compiled bundle (source not byte-faithful): ` +
@@ -603,13 +633,13 @@ export const SITE_TOOLS: SiteTool[] = [
     name: "site_versions",
     description: "List published site versions (newest first).",
     inputSchema: {},
-    async handler(_args, { env }) {
-      const versions = await listVersions(env);
-      const current = await getPublishedVersionId(env);
+    async handler(_args, { env, siteId }) {
+      const versions = await listVersions(env, siteId);
+      const current = await getPublishedVersionId(env, siteId);
       if (versions.length === 0) return text("No versions published yet.");
       const lines = versions.map((v) => {
-        const marker = v.id === current ? " <- live" : "";
-        return `v${v.id}  ${v.created_at}  ${v.message ?? "(no message)"}${marker}`;
+        const marker = v.n === current ? " <- live" : "";
+        return `v${v.n}  ${v.created_at}  ${v.message ?? "(no message)"}${marker}`;
       });
       return text(lines.join("\n"));
     },
@@ -644,8 +674,8 @@ export const SITE_TOOLS: SiteTool[] = [
         .string()
         .describe("A shell command line, e.g. `grep -rn accent styles.css`"),
     },
-    async handler({ command }, { env }) {
-      const result = await runShell(env, command);
+    async handler({ command }, { env, siteId }) {
+      const result = await runShell(env, siteId, command);
       const out = formatShellResult(command, result);
       return result.exitCode === 0
         ? text(out)
@@ -662,8 +692,8 @@ export const SITE_TOOLS: SiteTool[] = [
       "byte-for-byte for versions published with a source snapshot; legacy versions " +
       "fall back to compiled form. Does NOT change the live site.",
     inputSchema: {},
-    async handler(_args, { env }) {
-      const r = await resetDraft(env);
+    async handler(_args, { env, siteId }) {
+      const r = await resetDraft(env, siteId);
       if (!r.ok) return errorResult(`reset_site: ${r.error}`);
       const note = r.faithful
         ? "Original source restored byte-for-byte."
@@ -674,6 +704,77 @@ export const SITE_TOOLS: SiteTool[] = [
         `Draft reset to the published version (${r.restoredFiles} file(s), ` +
           `${r.restoredAssets} asset(s)). site_diff is now clean. ${note}`,
       );
+    },
+  },
+  {
+    name: "feature_migrate",
+    description:
+      "Evolve this site's FEATURE database — the SQLite tables your app code reads and " +
+      "writes (guestbooks, todos, orders, …), separate from the content models. Apply ONE " +
+      "named, versioned migration: `name` is a stable id (e.g. \"0001_create_posts\"), `up` " +
+      "is the SQL (CREATE TABLE / ALTER TABLE / CREATE INDEX; multiple statements separated " +
+      "by `;`). Idempotent: a name that's already been applied is skipped, so it's safe to " +
+      "re-run. Returns the resulting schema. Your serverFns/loaders then query these tables " +
+      "with Drizzle over `env.FEATURES_SQL` (drizzle-orm/sqlite-proxy + featuresDriver). Each " +
+      "site's feature DB is fully isolated. Use standard SQLite types (INTEGER, TEXT, REAL).",
+    inputSchema: {
+      name: z.string().describe("Stable migration id, e.g. 0001_create_posts"),
+      up: z.string().describe("SQL to apply (CREATE/ALTER/…; `;`-separated statements)"),
+    },
+    async handler({ name, up }, { env, siteId }) {
+      const res = JSON.parse(await featureStub(env, siteId).migrate([{ name, up }])) as {
+        applied: string[];
+        skipped: string[];
+        failed?: { name: string; error: string };
+        schema: any;
+      };
+      if (res.failed) {
+        return errorResult(
+          `Migration "${res.failed.name}" failed and was NOT applied:\n  ${res.failed.error}`,
+        );
+      }
+      const head = res.applied.length
+        ? `Applied migration "${res.applied.join(", ")}".`
+        : `"${name}" was already applied (no-op).`;
+      return text(`${head}\n\nFeature schema:\n${formatSchema(res.schema)}`);
+    },
+  },
+  {
+    name: "feature_schema",
+    description:
+      "Show this site's current FEATURE database schema (tables and columns) — the app " +
+      "tables managed with feature_migrate. Read this before writing serverFns that query them.",
+    inputSchema: {},
+    async handler(_args, { env, siteId }) {
+      const { schema } = JSON.parse(await featureStub(env, siteId).schema()) as {
+        schema: Record<string, any[]>;
+      };
+      return Object.keys(schema).length
+        ? text(`Feature schema:\n${formatSchema(schema)}`)
+        : text("No feature tables yet. Create one with feature_migrate.");
+    },
+  },
+  {
+    name: "feature_query",
+    description:
+      "Run a SQL statement against this site's FEATURE database for inspection or seeding " +
+      "(NOT the request hot path — your app code uses env.FEATURES_SQL/Drizzle for that). " +
+      "Reads return { columns, rows }; set write:true for INSERT/UPDATE/DELETE. `params` are " +
+      "positional bind values (use them instead of string-concatenating values).",
+    inputSchema: {
+      sql: z.string().describe("A single SQL statement"),
+      params: z.array(z.unknown()).optional().describe("Positional bind params"),
+      write: z.boolean().optional().describe("true for INSERT/UPDATE/DELETE"),
+    },
+    async handler({ sql, params, write }, { env, siteId }) {
+      try {
+        const r = JSON.parse(
+          await featureStub(env, siteId).query(sql, (params as unknown[]) ?? [], !!write),
+        );
+        return jsonText(r);
+      } catch (err) {
+        return errorResult(`feature_query failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
     },
   },
   {

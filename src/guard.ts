@@ -94,10 +94,11 @@ interface PublishedFootprint {
 
 async function loadPublishedFootprint(
   env: Env,
+  siteId: string,
 ): Promise<PublishedFootprint | null> {
-  const versionId = await getPublishedVersionId(env);
+  const versionId = await getPublishedVersionId(env, siteId);
   if (versionId == null) return null;
-  const version = await getVersion(env, versionId);
+  const version = await getVersion(env, siteId, versionId);
   if (!version || !version.footprint) return null;
   let footprint: Footprint;
   try {
@@ -135,9 +136,10 @@ function contractSequence(
 
 async function checkFieldContract(
   env: Env,
+  siteId: string,
   field: ResolvedField,
 ): Promise<GuardResult> {
-  const published = await loadPublishedFootprint(env);
+  const published = await loadPublishedFootprint(env, siteId);
   if (!published) return { allowed: true };
 
   const { entry } = fieldSurface(field.model_api_key, field.api_key);
@@ -160,9 +162,10 @@ async function checkFieldContract(
 
 async function checkModelContract(
   env: Env,
+  siteId: string,
   model: ResolvedModel,
 ): Promise<GuardResult> {
-  const published = await loadPublishedFootprint(env);
+  const published = await loadPublishedFootprint(env, siteId);
   if (!published) return { allowed: true };
 
   const surface = modelSurface(model.api_key);
@@ -191,7 +194,7 @@ async function checkModelContract(
   return { allowed: false, reason };
 }
 
-async function guardOp(env: Env, opDesc: SchemaOp): Promise<GuardResult> {
+async function guardOp(env: Env, siteId: string, opDesc: SchemaOp): Promise<GuardResult> {
   if (opDesc.kind === "model") {
     const model = await resolveModel(env, opDesc.ref);
     // Unknown target: let agent-cms produce the authoritative "not found".
@@ -201,7 +204,7 @@ async function guardOp(env: Env, opDesc: SchemaOp): Promise<GuardResult> {
         opDesc.newApiKey != null && opDesc.newApiKey !== model.api_key;
       if (!rename) return { allowed: true }; // non-breaking update
     }
-    return await checkModelContract(env, model);
+    return await checkModelContract(env, siteId, model);
   }
 
   const field = await resolveField(env, opDesc.ref);
@@ -213,7 +216,7 @@ async function guardOp(env: Env, opDesc: SchemaOp): Promise<GuardResult> {
       opDesc.newFieldType != null && opDesc.newFieldType !== field.field_type;
     if (!rename && !retype) return { allowed: true }; // non-breaking update
   }
-  return await checkFieldContract(env, field);
+  return await checkFieldContract(env, siteId, field);
 }
 
 // ---- public entry points ----------------------------------------------------
@@ -227,18 +230,19 @@ export async function guardSchemaOp(
   toolName: string,
   args: unknown,
   env: Env,
+  siteId: string,
 ): Promise<GuardResult> {
   const a = (args ?? {}) as Record<string, unknown>;
   switch (toolName) {
     case "delete_model": {
       const ref = str(a.modelId);
       if (!ref) return { allowed: true };
-      return guardOp(env, { kind: "model", op: "delete", ref });
+      return guardOp(env, siteId, { kind: "model", op: "delete", ref });
     }
     case "update_model": {
       const ref = str(a.modelId);
       if (!ref) return { allowed: true };
-      return guardOp(env, {
+      return guardOp(env, siteId, {
         kind: "model",
         op: "update",
         ref,
@@ -248,12 +252,12 @@ export async function guardSchemaOp(
     case "delete_field": {
       const ref = str(a.fieldId);
       if (!ref) return { allowed: true };
-      return guardOp(env, { kind: "field", op: "delete", ref });
+      return guardOp(env, siteId, { kind: "field", op: "delete", ref });
     }
     case "update_field": {
       const ref = str(a.fieldId);
       if (!ref) return { allowed: true };
-      return guardOp(env, {
+      return guardOp(env, siteId, {
         kind: "field",
         op: "update",
         ref,
@@ -317,7 +321,8 @@ export function classifyRestSchemaOp(
 /** Run the guard for a classified REST op descriptor. */
 export async function guardRestSchemaOp(
   env: Env,
+  siteId: string,
   descriptor: SchemaOp,
 ): Promise<GuardResult> {
-  return guardOp(env, descriptor);
+  return guardOp(env, siteId, descriptor);
 }
