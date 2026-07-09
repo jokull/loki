@@ -387,10 +387,49 @@ export class TenantFeatureDB extends DurableObject<Env> {
       .toArray() as any;
   }
 
+  /** Ensure the `_logs` ring table exists. */
+  private ensureLogs(): void {
+    this.sqlStore.exec(
+      "CREATE TABLE IF NOT EXISTS _logs (" +
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, " +
+        "ts TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, " +
+        "level TEXT NOT NULL, source TEXT, message TEXT NOT NULL)",
+    );
+  }
+
+  /** Append a log line (capped ring — last 500 kept). */
+  async appendLog(level: string, source: string | null, message: string): Promise<void> {
+    this.ensureLogs();
+    this.sqlStore.exec(
+      "INSERT INTO _logs (level, source, message) VALUES (?, ?, ?)",
+      String(level).slice(0, 16),
+      source ? String(source).slice(0, 64) : null,
+      String(message).slice(0, 2000),
+    );
+    this.sqlStore.exec(
+      "DELETE FROM _logs WHERE id <= (SELECT MAX(id) FROM _logs) - 500",
+    );
+  }
+
+  /** Read recent log lines (newest first) for the site_logs tool / dashboard. */
+  async readLogs(
+    limit = 100,
+  ): Promise<Array<{ ts: string; level: string; source: string | null; message: string }>> {
+    this.ensureLogs();
+    return this.sqlStore
+      .exec(
+        "SELECT ts, level, source, message FROM _logs ORDER BY id DESC LIMIT ?",
+        Math.min(Math.max(1, limit), 500),
+      )
+      .toArray() as any;
+  }
+
   private schemaObject(): FeatureSchema {
+    // Hide ALL underscore-prefixed internal tables (_migrations, _auth_*, _logs)
+    // from the agent-visible feature schema.
     const tables = this.sqlStore
       .exec(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_auth_%' AND name != '_migrations' ORDER BY name",
+        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND substr(name,1,1) != '_' ORDER BY name",
       )
       .toArray()
       .map((r: any) => r.name as string);

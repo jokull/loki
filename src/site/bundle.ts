@@ -19,7 +19,7 @@ export type Bundle = Record<string, string>;
 
 // Bump when the runtime shim, vendor modules, or bundle builder change — it is
 // mixed into every LOADER id so cached isolates are invalidated.
-export const RUNTIME_VERSION = "r14";
+export const RUNTIME_VERSION = "r15";
 
 const ENTRY_NAME = "__loki_entry.js";
 // Exported so the dep test-load probe (deps.ts) links its throwaway isolate on

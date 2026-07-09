@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { Env } from "../env";
 import { cmsExecuteFor } from "../cms-dispatch";
 import {
+  DEFAULT_SITE_ID,
   buildDraftAssetManifest,
   deleteAsset,
   deleteFile,
@@ -904,6 +905,29 @@ export const SITE_TOOLS: SiteTool[] = [
     async handler({ name }, { env, siteId }) {
       const ok = await deleteSecret(env, siteId, name);
       return ok ? text(`Deleted secret "${name}".`) : errorResult(`No such secret: ${name}`);
+    },
+  },
+  {
+    name: "site_logs",
+    description:
+      "Show this site's recent runtime logs (newest first) — render/serverFn errors " +
+      "captured automatically, plus anything your code logs with env.LOG.write(level, " +
+      "message). The fastest way to answer 'why did my published site 500?'. Returns up " +
+      "to `limit` lines (default 50, max 500). Owner only; tenant sites only.",
+    inputSchema: {
+      limit: z.number().int().positive().optional().describe("Max lines (default 50, max 500)"),
+    },
+    async handler({ limit }, { env, siteId }) {
+      if (siteId === DEFAULT_SITE_ID) {
+        return text("site_logs is available for tenant sites (a {sub}.loftur.app), not the default site.");
+      }
+      const logs = await featureStub(env, siteId).readLogs(limit ?? 50);
+      if (logs.length === 0) return text("No logs yet. Errors and env.LOG.write() lines appear here.");
+      return text(
+        logs
+          .map((l) => `${l.ts}  [${l.level}]${l.source ? " " + l.source : ""}  ${l.message}`)
+          .join("\n"),
+      );
     },
   },
   {

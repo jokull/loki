@@ -130,8 +130,9 @@ from BOTH a loader (server) and an island (browser):
   site's narrow capability env — the SAME one a loader/render gets: \`env.GRAPHQL\`,
   \`env.RECORDS\`, \`env.REALTIME\`, \`env.FEATURES_SQL\`, \`env.SECRETS\` (read stored API
   keys), \`env.AUTH\` (send magic-link sign-ins), \`env.MAIL\` (send transactional
-  email), plus MEDIATED outbound \`fetch()\` to external hosts. There is NO raw DB
-  and NO Worker Loader. \`user\` is the signed-in
+  email), \`env.LOG.write(level, message)\` (runtime logs — read them with the
+  \`site_logs\` tool), plus MEDIATED outbound \`fetch()\` to external hosts. There is
+  NO raw DB and NO Worker Loader. \`user\` is the signed-in
   end user (\`{ id, email }\`) or \`null\`. The return value is JSON-serialized to
   callers; annotate it (e.g. via
   \`import type { X } from "loki/schema"\`) so its type flows to the caller.

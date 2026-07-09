@@ -36,5 +36,12 @@ Branch `feat/loftur-web`. Roadmap = PLAN.md. Live progress log; final summary at
 - (none yet — build/type frictions only: getRouter export name, allowBuilds placeholders,
   shared D1/BufferSource lib-portability, /login required-search.)
 
+- **Phase 2 — marketing + docs** ✅ landing (hero/how-it-works/features/CTA), /docs, /changelog. Live on staging.
+- **Phase 4 — platform capabilities** (reordered ahead of Phase 3; higher value/effort):
+  - `env.MAIL` transactional email ✅ (blind build sent a real email, CF message id).
+  - End-user roles ✅ — `user.role` in every loader/serverFn; set_user_role/list_users tools (5/5).
+  - In progress: observability (site_logs).
+
 ## Next
-- Phase 2: marketing + docs site.
+- Phase 3 observability (site_logs) · more Phase 4 (i18n needs agent-cms locale API check;
+  cron; uploads; analytics; SEO) · Phase 6 hardening · Phase 7 DX + regression harness.

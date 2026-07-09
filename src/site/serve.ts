@@ -14,6 +14,7 @@ import { buildWorkerCode, RUNTIME_VERSION, type Bundle } from "./bundle";
 import { serveModule, serveVendor } from "./assets";
 import { serveStaticAsset } from "./static-assets";
 import { resolveUser, handleAuthRoute } from "../auth";
+import { logLine } from "../logs";
 import { assembleDeps, draftDepSnapshot } from "./deps";
 import {
   DEFAULT_SITE_ID,
@@ -169,6 +170,10 @@ async function runSite(
   if (exports?.MailEntrypoint) {
     workerEnv.MAIL = exports.MailEntrypoint({ props: { siteId } });
   }
+  // Runtime logs: env.LOG.write(level, message) — surfaced via the site_logs tool.
+  if (exports?.LogEntrypoint) {
+    workerEnv.LOG = exports.LogEntrypoint({ props: { siteId } });
+  }
   // Mediated outbound: any external fetch() the site makes is proxied + logged
   // through OutboundEntrypoint (per-site policy seam). Falls back to no network
   // if the entrypoint is somehow unavailable.
@@ -197,6 +202,8 @@ async function runSite(
     return await stub.getEntrypoint().fetch(forwarded);
   } catch (err) {
     const message = err instanceof Error ? (err.stack ?? err.message) : String(err);
+    const path = (() => { try { return new URL(request.url).pathname; } catch { return "?"; } })();
+    ctx.waitUntil(logLine(env, siteId, "error", `render ${path}`, message));
     return new Response(
       `Site worker error (loader ${loaderId}):\n${message}`,
       { status: 500, headers: { "content-type": "text/plain; charset=utf-8" } },

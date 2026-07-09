@@ -45,6 +45,7 @@ export { SecretsEntrypoint } from "./secrets";
 export { OutboundEntrypoint } from "./outbound";
 export { AuthEntrypoint } from "./auth";
 export { MailEntrypoint } from "./mail";
+export { LogEntrypoint } from "./logs";
 
 /**
  * Loopback GraphQL entrypoint for the dynamic site worker.
