@@ -19,7 +19,7 @@ export type Bundle = Record<string, string>;
 
 // Bump when the runtime shim, vendor modules, or bundle builder change — it is
 // mixed into every LOADER id so cached isolates are invalidated.
-export const RUNTIME_VERSION = "r11";
+export const RUNTIME_VERSION = "r12";
 
 const ENTRY_NAME = "__loki_entry.js";
 const COMPAT_DATE = "2026-07-01";

@@ -171,6 +171,37 @@ export async function query(env, document, variables) {
 
 export { h, Fragment, renderToString };
 
+// ---- feature database (drizzle) --------------------------------------------
+// Return the async remote callback drizzle's \`drizzle-orm/sqlite-proxy\` driver
+// wants — \`(sql, params, method) => Promise<{ rows }>\` — backed by the mediated
+// \`env.FEATURES_SQL.exec()\` RPC. A raw D1Database cannot cross the Worker-Loader
+// boundary (DataCloneError), so the feature DB is reached ONLY through this narrow
+// exec() capability, which already returns the POSITIONAL row shape drizzle maps
+// by column index: \`all\`/\`values\` -> array-of-arrays, \`get\` -> a single row array
+// (or undefined when no row), \`run\` -> empty. So the agent never writes the
+// sqlite-proxy wrapper or worries about \`.raw()\` row shapes — just:
+//
+//   import { drizzle } from "drizzle-orm/sqlite-proxy";
+//   const db = drizzle(featuresDriver(env), { schema });
+//
+// Construct drizzle in YOUR module (it is a resolved dep, not re-exported here).
+// SERVER-ONLY, exactly like query(): the browser build throws.
+export function featuresDriver(env) {
+  if (!env || !env.FEATURES_SQL) {
+    throw new Error(
+      "featuresDriver(): env.FEATURES_SQL is not available. The feature database " +
+        "is reachable only from a serverFn/loader (server) — never the browser.",
+    );
+  }
+  return async function (sql, params, method) {
+    const res = await env.FEATURES_SQL.exec(sql, params || [], method);
+    // exec() has already mapped D1's .raw() output into the positional shape
+    // sqlite-proxy expects (get -> single row array or undefined; all/values ->
+    // array-of-arrays; run -> []). Forward it unchanged.
+    return { rows: res ? res.rows : [] };
+  };
+}
+
 // Realtime is a browser capability: subscribing happens in a hydrated island.
 export function connectChannel() {
   throw new Error(
@@ -653,6 +684,14 @@ export function query() {
   throw new Error(
     "query() is server-only — it cannot run in the browser. Fetch data in a route " +
       "loader (server) and pass it into the island via props.",
+  );
+}
+
+export function featuresDriver() {
+  throw new Error(
+    "featuresDriver() is server-only — the feature database is reachable only from a " +
+      "serverFn/loader (server), never the browser. Read it there and pass data into " +
+      "the island via props, or mutate it through a serverFn RPC.",
   );
 }
 
