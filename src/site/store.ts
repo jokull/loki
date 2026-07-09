@@ -7,6 +7,8 @@ export interface SiteFile {
   path: string;
   source: string;
   compiled: string | null;
+  /** Synthesized browser stub for serverFn modules; NULL otherwise. */
+  client_compiled: string | null;
   updated_at: string;
 }
 
@@ -14,9 +16,11 @@ export interface SiteVersion {
   id: number;
   created_at: string;
   message: string | null;
-  bundle: string; // JSON: { [path]: compiledModule }
+  bundle: string; // JSON: { [path]: compiledModule } (full, isolate-side)
   footprint: string | null; // JSON footprint
   assets: string | null; // JSON asset manifest: { [path]: AssetManifestEntry }
+  /** JSON: { [path]: clientCompiled } — browser stubs for serverFn modules. */
+  client_bundle: string | null;
 }
 
 /** Draft asset row (site_assets). `path` always starts with `public/`. */
@@ -41,14 +45,14 @@ export type AssetManifest = Record<string, AssetManifestEntry>;
 
 export async function listFiles(env: Env): Promise<SiteFile[]> {
   const { results } = await env.DB.prepare(
-    "SELECT path, source, compiled, updated_at FROM site_files ORDER BY path",
+    "SELECT path, source, compiled, client_compiled, updated_at FROM site_files ORDER BY path",
   ).all<SiteFile>();
   return results ?? [];
 }
 
 export async function readFile(env: Env, path: string): Promise<SiteFile | null> {
   return await env.DB.prepare(
-    "SELECT path, source, compiled, updated_at FROM site_files WHERE path = ?",
+    "SELECT path, source, compiled, client_compiled, updated_at FROM site_files WHERE path = ?",
   )
     .bind(path)
     .first<SiteFile>();
@@ -59,16 +63,18 @@ export async function writeFile(
   path: string,
   source: string,
   compiled: string | null,
+  clientCompiled: string | null,
 ): Promise<void> {
   await env.DB.prepare(
-    `INSERT INTO site_files (path, source, compiled, updated_at)
-     VALUES (?, ?, ?, datetime('now'))
+    `INSERT INTO site_files (path, source, compiled, client_compiled, updated_at)
+     VALUES (?, ?, ?, ?, datetime('now'))
      ON CONFLICT(path) DO UPDATE SET
        source = excluded.source,
        compiled = excluded.compiled,
+       client_compiled = excluded.client_compiled,
        updated_at = excluded.updated_at`,
   )
-    .bind(path, source, compiled)
+    .bind(path, source, compiled, clientCompiled)
     .run();
 }
 
@@ -87,15 +93,17 @@ export async function insertVersion(
   bundle: Record<string, string>,
   footprint: unknown,
   assets: AssetManifest,
+  clientBundle: Record<string, string>,
 ): Promise<number> {
   const res = await env.DB.prepare(
-    "INSERT INTO site_versions (message, bundle, footprint, assets) VALUES (?, ?, ?, ?)",
+    "INSERT INTO site_versions (message, bundle, footprint, assets, client_bundle) VALUES (?, ?, ?, ?, ?)",
   )
     .bind(
       message,
       JSON.stringify(bundle),
       JSON.stringify(footprint),
       JSON.stringify(assets),
+      JSON.stringify(clientBundle),
     )
     .run();
   return Number(res.meta.last_row_id);
@@ -106,10 +114,23 @@ export async function getVersion(
   id: number,
 ): Promise<SiteVersion | null> {
   return await env.DB.prepare(
-    "SELECT id, created_at, message, bundle, footprint, assets FROM site_versions WHERE id = ?",
+    "SELECT id, created_at, message, bundle, footprint, assets, client_bundle FROM site_versions WHERE id = ?",
   )
     .bind(id)
     .first<SiteVersion>();
+}
+
+/** Parse a version row's snapshotted browser stubs (empty on legacy rows). */
+export function versionClientBundle(
+  version: SiteVersion,
+): Record<string, string> {
+  if (!version.client_bundle) return {};
+  try {
+    const parsed = JSON.parse(version.client_bundle) as Record<string, string>;
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
 }
 
 /** Parse a version row's snapshotted asset manifest (empty on legacy rows). */

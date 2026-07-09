@@ -16,6 +16,7 @@ import {
 import type { Env } from "../env";
 import { getCms } from "../env";
 import { buildDraftBundle, smokeRender } from "./serve";
+import { buildClientBuild } from "./transpile";
 import {
   buildDraftAssetManifest,
   insertVersion,
@@ -45,26 +46,39 @@ export interface Footprint {
 
 const GQL_TEMPLATE = /\bgql\s*`([\s\S]*?)`/g;
 
+/**
+ * Extract the GraphQL documents from a SINGLE file: the whole body for a
+ * `.graphql` file, or every `gql`` `` template inside a JS/TS module. `${...}`
+ * interpolations are stripped so each document parses standalone — the same
+ * logic the whole-tree scan and publish use, so write-time and publish-time
+ * validation behave identically.
+ */
+export function extractDocsFromFile(path: string, source: string): ExtractedDoc[] {
+  const docs: ExtractedDoc[] = [];
+  if (path.endsWith(".graphql")) {
+    const text = source.trim();
+    if (text) docs.push({ source: path, text });
+    return docs;
+  }
+  if (!/\.(tsx|ts|jsx|mjs|js)$/.test(path)) return docs;
+  let match: RegExpExecArray | null;
+  let i = 0;
+  GQL_TEMPLATE.lastIndex = 0;
+  while ((match = GQL_TEMPLATE.exec(source)) !== null) {
+    // Strip ${...} interpolations so the document parses standalone.
+    const text = match[1].replace(/\$\{[\s\S]*?\}/g, "").trim();
+    if (text) docs.push({ source: `${path}#gql${i}`, text });
+    i++;
+  }
+  return docs;
+}
+
 /** Extract every GraphQL document from the draft: gql`` templates + *.graphql. */
 export async function extractDocuments(env: Env): Promise<ExtractedDoc[]> {
   const files = await listFiles(env);
   const docs: ExtractedDoc[] = [];
   for (const file of files) {
-    if (file.path.endsWith(".graphql")) {
-      const text = file.source.trim();
-      if (text) docs.push({ source: file.path, text });
-      continue;
-    }
-    if (!/\.(tsx|ts|jsx|mjs|js)$/.test(file.path)) continue;
-    let match: RegExpExecArray | null;
-    let i = 0;
-    GQL_TEMPLATE.lastIndex = 0;
-    while ((match = GQL_TEMPLATE.exec(file.source)) !== null) {
-      // Strip ${...} interpolations so the document parses standalone.
-      const text = match[1].replace(/\$\{[\s\S]*?\}/g, "").trim();
-      if (text) docs.push({ source: `${file.path}#gql${i}`, text });
-      i++;
-    }
+    docs.push(...extractDocsFromFile(file.path, file.source));
   }
   return docs;
 }
@@ -336,6 +350,19 @@ export async function publishSite(
     };
   }
 
+  // (d2) synthesize the browser stub bundle for serverFn modules. Recomputed
+  // from source (not just read from client_compiled) so it also catches any
+  // collision in a file written before client stubs existed — a serverFn module
+  // that leaks non-serverFn exports must not publish.
+  const clientBundle: Record<string, string> = {};
+  for (const f of await listFiles(env)) {
+    const built = buildClientBuild(f.path, f.source);
+    if (!built.ok) {
+      return { ok: false, stage: "client-build", error: built.error! };
+    }
+    if (built.clientCompiled != null) clientBundle[f.path] = built.clientCompiled;
+  }
+
   // (e) snapshot the draft asset manifest (blobs already live in R2, so this is
   // just a path->{hash,contentType,size} map; publish/rollback swap manifests).
   const assetManifest = await buildDraftAssetManifest(env);
@@ -351,6 +378,7 @@ export async function publishSite(
     bundle,
     footprint,
     assetManifest,
+    clientBundle,
   );
   await setState(env, "published_version", String(versionId));
 

@@ -82,6 +82,128 @@ response is \`405 Method Not Allowed\`. Action return values are normalized:
       );
     }
 
+## Server functions: serverFn (the PREFERRED path for forms / mutations / data)
+
+A \`serverFn\` is a typed, validated server function. It is the recommended way to
+do mutations and typed reads — reach for a raw route \`action\` only when you need a
+full \`Response\` (redirects, non-JSON, webhooks).
+
+CONVENTION (enforced at write): a serverFn module exports ONLY serverFns (and
+\`import type\` types). The browser build of a serverFn module is SYNTHESIZED
+entirely from its serverFn exports — the handler/validator source is never sent
+to the client — so any OTHER value export (a component, a plain function,
+\`export default\`, an \`export { … }\` list) would be dropped from the client build
+and is REJECTED by \`site_write\` with a message telling you to move the serverFn(s)
+into their own module. Keep serverFns in a dedicated module (e.g. under
+\`functions/\`) and put components/helpers elsewhere. Define it there and import it
+from BOTH a loader (server) and an island (browser):
+
+    // functions/guestbook.ts
+    import { serverFn } from "loki/runtime";
+    import type { GuestbookEntryRecord } from "loki/schema";
+
+    export const createEntry = serverFn({ method: "POST" })
+      .validator((input) => ({
+        name: String(input.name).slice(0, 80),
+        message: String(input.message).slice(0, 500),
+      }))
+      .handler(async ({ data, env }): Promise<{ id: string }> => {
+        const created = await env.RECORDS.create("guestbook_entry", data);
+        if (created.error) throw new Error(created.error);
+        await env.REALTIME.publish("guestbook", { id: created.id, ...data });
+        return { id: created.id };
+      });
+
+    export const recentEntries = serverFn() // called from a loader (in-isolate); method n/a
+      .handler(async ({ env }): Promise<GuestbookEntryRecord[]> => {
+        const data = await query(env, ENTRIES);
+        return data.allGuestbookEntries;
+      });
+
+- \`.validator(fn)\`: transforms/validates the RAW input into the typed \`data\` your
+  handler receives. If it throws, the RPC call returns \`400\` with the thrown
+  message. Optional (defaults to identity). Its return TYPE is your \`data\` type.
+- \`.handler({ data, env, request })\`: runs IN THE ISOLATE. \`env\` is the site's
+  narrow capability env — the SAME one a loader/render gets: \`env.GRAPHQL\`,
+  \`env.RECORDS\`, \`env.REALTIME\`. There is NO raw DB, NO loader, NO outbound fetch.
+  The return value is JSON-serialized to callers; annotate it (e.g. via
+  \`import type { X } from "loki/schema"\`) so its type flows to the caller.
+- \`method\`: \`"GET"\` or \`"POST"\` (POST is the default for the browser stub). It ONLY
+  affects the browser-RPC TRANSPORT: a GET stub encodes the input as
+  \`?data=<urlencoded JSON>\` (watch URL length — use POST for large/complex input);
+  a POST stub sends \`{ data }\` in the request body. When a serverFn is called
+  DIRECTLY from a loader it is an in-isolate call and \`method\` is irrelevant (no
+  HTTP happens). Use GET for cache-friendly reads, POST for mutations.
+
+### serverFn id + RPC endpoint (curl-testing)
+
+Every serverFn has a stable id of the form \`<modulePath>#<exportName>\` (e.g.
+\`functions/guestbook.ts#createEntry\`) — derived from where it's defined, identical
+in the isolate and the browser stub, so warm isolates cache across publishes of
+unchanged code. The browser stub calls:
+
+    <method> /__fn/<scope>/<encodeURIComponent(id)>
+
+where \`scope\` is \`draft\` in preview (requires the \`loki_preview\` cookie) or
+\`v<N>\` on the published site (this is exactly \`window.__lokiFnBase\`, injected into
+the page alongside the island bootstrap). So to curl-test a POST serverFn in
+preview (reusing the cookie jar from \`preview_site\`):
+
+    curl -sb jar -X POST "<origin>/__fn/draft/functions%2Fguestbook.ts%23createEntry" \\
+      -H 'content-type: application/json' \\
+      -d '{"data":{"name":"Ada","message":"hi"}}'
+
+A GET serverFn instead: \`curl -sb jar "<origin>/__fn/draft/<id>?data=%7B%7D"\`.
+Responses: \`200\` with the JSON result, \`400\` on a validator throw / bad input,
+\`404\` unknown id, \`500\` on a handler throw (logged server-side, generic message).
+
+### Two ways to call the SAME imported function
+
+- FROM A LOADER (server-side): just call it — a direct in-isolate call, no HTTP.
+  \`env\` is supplied for you (do NOT pass it):
+
+      // routes/guestbook.tsx
+      import { recentEntries } from "../functions/guestbook.ts";
+      export async function loader() {
+        return { entries: await recentEntries() };
+      }
+
+- FROM AN ISLAND (browser): the SAME import becomes an RPC stub. Calling it does
+  \`POST /__fn/<version>/<id>\` (or \`/__fn/draft/...\` in preview) with \`{ data }\` and
+  returns the parsed result — no full-page reload:
+
+      // components/guestbook.tsx (island)
+      import { createEntry } from "../functions/guestbook.ts";
+      // ...inside a submit handler:
+      const { id } = await createEntry({ name, message });
+
+  This dual behaviour is automatic: the module resolves to the real handler in the
+  isolate and to a fetch stub in the browser (like how \`query()\` is server-only).
+  Each serverFn has a stable id derived from its module path + export name, so warm
+  isolates cache across publishes of unchanged code. serverFns must be NAMED
+  exports and require file-based routing (not the \`main.*\` escape hatch).
+
+### Security (READ THIS)
+
+A serverFn runs SANDBOXED in the site isolate with EXACTLY the capabilities a
+route loader has — \`env.GRAPHQL\` (read), \`env.RECORDS.create\` (gated by
+loki.config.json \`writableModels\`), \`env.REALTIME.publish\` — and nothing else. It
+cannot reach D1, the Worker Loader, or the network directly, and \`env.RECORDS\`
+rejects any model not in your allowlist exactly as it does from a loader. Writing
+a serverFn does NOT escalate privileges beyond what your page code already has.
+
+Your handler and validator SOURCE does NOT ship to the browser. The browser build
+of a serverFn module is a synthesized stub — for each serverFn just
+\`export const NAME = __lokiClientServerFn("<id>","<method>")\`, no handler body, no
+validator, no \`gql\` strings, no logic. So the RPC boundary is real: the client can
+only INVOKE the serverFn over \`/__fn/...\` and receive its JSON result; it cannot
+read what the handler does. The capability boundary is \`env\` — what you can reach
+through \`env.GRAPHQL\`/\`env.RECORDS\`/\`env.REALTIME\` is all a handler can do.
+Nevertheless, secrets belong in bindings/\`env\`, NEVER hardcoded in a module that
+client code imports: only serverFn modules are stubbed, so a secret placed in a
+component or shared util (which IS served verbatim to the browser for hydration)
+would leak. Keep secrets in \`env\`.
+
 ## Scoped record writes: env.RECORDS.create
 
 Route actions (and loaders) can create CMS records via \`env.RECORDS\`, but ONLY
@@ -105,6 +227,18 @@ RECORDS exposes ONLY \`create\` (no update/delete/query). There is NO rate limit
 in v1: a public write route MUST validate inputs itself and rely on model field
 validators (length caps, required, format) to reject junk.
 
+CASING TRAP (important): \`env.RECORDS.create(model, fields)\` takes **snake_case**
+field api_keys — the CMS write API — while GraphQL READS expose the SAME fields in
+**camelCase**. So within ONE file you routinely write \`postSlug\` in a \`gql\` query
+and \`post_slug\` in the \`create\` call for the same field:
+
+    await env.RECORDS.create("comment", { post_slug: slug, author_name: name });
+    // …but the query that reads them back uses camelCase:
+    gql\`query { allComments { postSlug authorName } }\`
+
+If a create silently ignores a field or errors on an unknown one, check the case:
+create = snake_case, GraphQL = camelCase.
+
 ## Realtime: env.REALTIME.publish (server) + connectChannel (client)
 
 Push live updates to connected browsers over WebSockets.
@@ -126,14 +260,50 @@ Push live updates to connected browsers over WebSockets.
 - \`loki/runtime\` -> \`gql\` (tag GraphQL documents), \`query(env, document, variables)\`
   (runs a GraphQL query against the CMS; drafts are visible in preview mode),
   \`renderStructuredText(value)\` (renders a Structured Text DAST value to Preact vnodes),
-  \`Island\` (the client-hydration helper — see "Islands" below), and
+  \`Island\` (the client-hydration helper — see "Islands" below),
+  \`serverFn({...}).validator(...).handler(...)\` (a typed, validated server function
+  callable from a loader OR a browser island — see "Server functions" below), and
   \`connectChannel(name, onMessage)\` (client-only realtime subscription — see
   "Realtime" below).
+- \`loki/schema\` (TYPE IMPORTS ONLY) -> content types generated from the live
+  schema: \`import type { BlogPostRecord, Query } from "loki/schema"\`. See "Typed
+  content" below; read the exact shapes with the \`schema_types\` tool.
 - Relative imports between your own files must include the extension, e.g.
   \`import { Layout } from "./components/layout.tsx"\`.
 
 Do NOT rely on network access, \`process\`, or Node built-ins — the site runs in an
 isolated worker with no outbound fetch except the GraphQL binding.
+
+## Typed content (schema_types + loki/schema)
+
+Your content has a real, live-generated TypeScript type for every model. Use it —
+you have no IDE hover, so reading the types is how you know the exact field names
+and shapes you're coding against.
+
+1. Run the \`schema_types\` MCP tool FIRST. It returns TypeScript generated from the
+   LIVE schema: one interface per record type (e.g. \`BlogPostRecord\`,
+   \`GuestbookEntryRecord\`), the \`Query\` root (\`allBlogPosts\` / \`blogPost\` /
+   \`_allBlogPostsMeta\` return shapes, each field's args in a JSDoc comment), the
+   \`*OrderBy\` and \`ItemStatus\` enums, and the filter input types. Nullability
+   (\`| null\`), lists (\`T[]\`), nested linked records, and Structured Text
+   (\`{ value, blocks, inlineBlocks, links }\`) are all rendered faithfully.
+2. Annotate loaders and props with \`import type\` from \`loki/schema\` — the SAME
+   types:
+
+       import type { BlogPostRecord, Query } from "loki/schema";
+       export async function loader({ env }): Promise<{ posts: BlogPostRecord[] }> { … }
+       export default function Home({ posts }: { posts: BlogPostRecord[] }) { … }
+
+   \`loki/schema\` is TYPES-ONLY: \`import type\` (and any import used only in type
+   positions) is erased at transpile, so it adds NO runtime import. Using one of
+   its names as a runtime VALUE fails the write with a clear message — keep it to
+   \`import type\`.
+3. Every \`gql\`\`...\`\`\` document is validated against the live schema at WRITE time:
+   \`site_write\` returns a \`graphqlErrors\` block (precise messages, e.g.
+   \`Cannot query field "x" on type "BlogPostRecord". Did you mean "y"?\`) the moment
+   you save. Those errors are NON-FATAL (the file is still written, so you can
+   scaffold a component before its query is done) — but \`publish_site\` HARD-GATES
+   on the same validation, so fix them before publishing.
 
 ## Example: routes/posts/[slug].tsx
 
@@ -144,6 +314,7 @@ with \`renderStructuredText\`. (Explore the exact fields first with the
 \`graphql_query\` MCP tool — introspection is allowed.)
 
     import { gql, query, renderStructuredText } from "loki/runtime";
+    import type { BlogPostRecord } from "loki/schema";
 
     const POST = gql\`
       query Post($slug: String!) {
@@ -156,14 +327,16 @@ with \`renderStructuredText\`. (Explore the exact fields first with the
       }
     \`;
 
-    export async function loader({ env, params }) {
+    // Type the loader's return so props are checked against the real schema.
+    export async function loader({ env, params }): Promise<{ post: BlogPostRecord | null }> {
       const data = await query(env, POST, { slug: params.slug });
       return { post: data.blogPost };
     }
 
-    export const head = (props) => ({ title: props.post?.title ?? "Post" });
+    export const head = (props: { post: BlogPostRecord | null }) =>
+      ({ title: props.post?.title ?? "Post" });
 
-    export default function Post({ post }) {
+    export default function Post({ post }: { post: BlogPostRecord | null }) {
       if (!post) return <main><h1>Not found</h1></main>;
       return (
         <main class="post">
@@ -172,6 +345,10 @@ with \`renderStructuredText\`. (Explore the exact fields first with the
         </main>
       );
     }
+
+    // \`BlogPostRecord\` (and Query, filter/orderBy types) come from the live schema —
+    // run \`schema_types\` to read the exact fields. \`import type\` is erased at
+    // transpile, so it adds no runtime import.
 
 ## Islands (client-side interactivity)
 
@@ -230,50 +407,76 @@ Rules & notes:
 - Islands require file-based routing (they don't work under a \`main.*\` escape
   hatch).
 
-## Worked example: live guestbook (action + RECORDS + REALTIME + island)
+## Worked example: live guestbook (serverFn + RECORDS + REALTIME + island)
 
-Wires everything together — a form island POSTs to its route action; the action
-validates, creates a record, and publishes to a channel; the same island
-subscribes and appends new entries live.
+The canonical pattern. A shared \`functions/\` module defines a typed POST serverFn
+(validate -> create record -> publish to a channel); the route loader reads via a
+GET serverFn; the form island calls the POST serverFn on submit (RPC — no reload)
+and subscribes to the channel to append everyone's entries live.
 
     // loki.config.json
     { "writableModels": ["guestbook_entry"] }
 
-    // routes/guestbook.tsx
-    import { gql, query, Island } from "loki/runtime";
+    // functions/guestbook.ts — shared by the loader (server) and island (browser)
+    import { gql, query, serverFn } from "loki/runtime";
+    import type { GuestbookEntryRecord } from "loki/schema";
+
     const ENTRIES = gql\`
       query { allGuestbookEntries(orderBy: _createdAt_DESC, first: 50) { id name message } }
     \`;
-    export async function loader({ env }) {
-      const data = await query(env, ENTRIES);
-      return { entries: data.allGuestbookEntries };
-    }
-    export async function action({ request, env }) {
-      const form = await request.formData();
-      const name = String(form.get("name") || "").trim().slice(0, 80);
-      const message = String(form.get("message") || "").trim().slice(0, 500);
-      if (!name || !message) return new Response("name and message required", { status: 400 });
-      const created = await env.RECORDS.create("guestbook_entry", { name, message });
-      if (created.error) return new Response(created.error, { status: 400 });
-      await env.REALTIME.publish("guestbook", { id: created.id, name, message });
-      return { redirect: "/guestbook" };
+
+    export const recentEntries = serverFn()
+      .handler(async ({ env }): Promise<GuestbookEntryRecord[]> => {
+        const data = await query(env, ENTRIES);
+        return data.allGuestbookEntries;
+      });
+
+    export const createEntry = serverFn({ method: "POST" })
+      .validator((input) => {
+        const name = String(input.name || "").trim().slice(0, 80);
+        const message = String(input.message || "").trim().slice(0, 500);
+        if (!name || !message) throw new Error("name and message are required");
+        return { name, message };
+      })
+      .handler(async ({ data, env }): Promise<{ id: string } & typeof data> => {
+        const created = await env.RECORDS.create("guestbook_entry", data);
+        if (created.error) throw new Error(created.error);
+        await env.REALTIME.publish("guestbook", { id: created.id, ...data });
+        return { id: created.id, ...data };
+      });
+
+    // routes/guestbook.tsx — loader calls the GET serverFn DIRECTLY (in-isolate)
+    import { Island } from "loki/runtime";
+    import { recentEntries } from "../functions/guestbook.ts";
+    export async function loader() {
+      return { entries: await recentEntries() };
     }
     export default function Guestbook({ entries }) {
       return <Island src="components/guestbook.tsx" client="load" entries={entries} />;
     }
 
-    // components/guestbook.tsx  (SSR'd for first paint, hydrated in the browser)
+    // components/guestbook.tsx — island: calls the POST serverFn over RPC on submit
     import { useState, useEffect } from "preact/hooks";
     import { connectChannel } from "loki/runtime";
+    import { createEntry } from "../functions/guestbook.ts";
     export default function Guestbook({ entries }) {
       const [items, setItems] = useState(entries || []);
       useEffect(() => {
         const ch = connectChannel("guestbook", (e) => setItems((cur) => [e, ...cur]));
         return () => ch.close();
       }, []);
+      async function onSubmit(ev) {
+        ev.preventDefault();
+        const f = ev.currentTarget;
+        try {
+          // RPC to the isolate; the channel echo appends it for us.
+          await createEntry({ name: f.name.value, message: f.message.value });
+          f.reset();
+        } catch (err) { alert(String(err.message || err)); }
+      }
       return (
         <section>
-          <form method="post" action="/guestbook">
+          <form onSubmit={onSubmit}>
             <input name="name" required maxLength={80} />
             <input name="message" required maxLength={500} />
             <button>Sign</button>
@@ -283,10 +486,11 @@ subscribes and appends new entries live.
       );
     }
 
-Note: a full-page form POST reloads the page (the action 303-redirects back), so
-the poster sees their entry via the loader; OTHER open browsers get it live over
-the channel. (Progressive enhancement — intercept submit with \`fetch\` to avoid
-the reload — is left to you.)
+The poster's own submit updates the list via the channel echo (no reload); OTHER
+open browsers get it live over the same channel. \`createEntry\` runs the SAME
+validated handler whether reached from a loader or this island — the browser build
+just turns the call into an RPC. (A raw route \`action\` still works as the escape
+hatch when you need a redirect or a non-JSON \`Response\`.)
 
 ## styles.css example
 
@@ -406,7 +610,8 @@ Then \`publish_site\` — it snapshots the asset manifest into the version and w
 
 ## Workflow
 
-1. site_write("routes/index.tsx", "...")   (transpiled immediately; errors returned)
+0. schema_types()                          -> read the content types before querying
+1. site_write("routes/index.tsx", "...")   (transpiled + gql validated; errors returned)
 2. preview_site()                          -> open the returned URL to see the DRAFT
 3. publish_site("message")                 -> validates + smoke-renders + snapshots
 4. rollback_site(versionId) / site_versions() as needed

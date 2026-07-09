@@ -24,8 +24,8 @@ import { preactJsxRuntime } from "../vendor/preact-jsx-runtime";
 import { CLIENT_RUNTIME_MODULE } from "./runtime-shim";
 import { type Bundle } from "./bundle";
 import { isTranspilable } from "./transpile";
-import { buildDraftBundle } from "./serve";
-import { getVersion } from "./store";
+import { buildDraftClientBundle } from "./serve";
+import { getVersion, versionClientBundle } from "./store";
 
 const JS_TYPE = "text/javascript; charset=utf-8";
 const IMMUTABLE = "public, max-age=31536000, immutable";
@@ -80,7 +80,9 @@ export async function serveModule(
 
   if (scope === "draft") {
     if (!previewOk) return new Response("Not found", { status: 404 });
-    const bundle = await buildDraftBundle(env);
+    // The CLIENT bundle: serverFn modules resolve to their synthesized stub, so
+    // handler/validator source (secrets, gql, logic) never reaches the browser.
+    const bundle = await buildDraftClientBundle(env);
     const code = resolveModule(bundle, modPath);
     if (code == null) return new Response("Not found", { status: 404 });
     return jsResponse(code, "no-store");
@@ -90,7 +92,14 @@ export async function serveModule(
   if (!Number.isInteger(versionId)) return new Response("Not found", { status: 404 });
   const version = await getVersion(env, versionId);
   if (!version) return new Response("Not found", { status: 404 });
-  const bundle = JSON.parse(version.bundle) as Bundle;
+  // Overlay the version's browser stubs over its full bundle: serverFn modules
+  // serve the stub, everything else the normal compiled text. (Legacy versions
+  // published before client stubs existed carry no overlay and fall back to the
+  // full text — republish to stub them.)
+  const bundle = {
+    ...(JSON.parse(version.bundle) as Bundle),
+    ...versionClientBundle(version),
+  };
   const code = resolveModule(bundle, modPath);
   if (code == null) return new Response("Not found", { status: 404 });
   return jsResponse(code, IMMUTABLE);

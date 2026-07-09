@@ -22,12 +22,30 @@ import {
 
 const PREVIEW_COOKIE = "loki_preview";
 
-/** Build the draft bundle from the live working tree (site_files). */
+/**
+ * Build the draft bundle for the ISOLATE (server) from the live working tree.
+ * Always the FULL compiled text — serverFn handlers must run server-side.
+ */
 export async function buildDraftBundle(env: Env): Promise<Bundle> {
   const files = await listFiles(env);
   const bundle: Bundle = {};
   for (const f of files) {
     bundle[f.path] = f.compiled ?? f.source;
+  }
+  return bundle;
+}
+
+/**
+ * Build the draft bundle served to the BROWSER (/__modules). serverFn modules
+ * resolve to their synthesized stub (client_compiled) so no handler/validator
+ * source ever reaches the client; everything else is identical to the isolate
+ * text. NEVER feed this to buildWorkerCode — the isolate needs the full build.
+ */
+export async function buildDraftClientBundle(env: Env): Promise<Bundle> {
+  const files = await listFiles(env);
+  const bundle: Bundle = {};
+  for (const f of files) {
+    bundle[f.path] = f.client_compiled ?? f.compiled ?? f.source;
   }
   return bundle;
 }
@@ -255,6 +273,29 @@ export async function serveSite(
     const cookie = getCookie(request, PREVIEW_COOKIE);
     const previewOk = !!cookie && (await isValidPreviewToken(env, cookie));
     return serveModule(env, url.pathname, previewOk);
+  }
+
+  // serverFn RPC: /__fn/<scope>/<id>. The scope selects the site tree exactly
+  // like page serving — `draft` (preview cookie required) loads the draft
+  // isolate, `v<N>` the published one. We forward the whole request (incl. the
+  // /__fn/... path) into the SAME isolate a page render uses, so the serverFn
+  // handler receives the identical narrow-capability env. No duplicated wiring.
+  if (url.pathname.startsWith("/__fn/")) {
+    const scope = url.pathname.slice("/__fn/".length).split("/")[0];
+    if (scope === "draft") {
+      const cookie = getCookie(request, PREVIEW_COOKIE);
+      const previewOk = !!cookie && (await isValidPreviewToken(env, cookie));
+      if (!previewOk) {
+        return new Response("Preview cookie required for draft server functions.", {
+          status: 403,
+        });
+      }
+      return serveDraft(env, ctx, request);
+    }
+    if (/^v\d+$/.test(scope)) {
+      return servePublished(env, ctx, request);
+    }
+    return new Response("Bad server-function scope.", { status: 400 });
   }
 
   if (url.pathname === "/__preview") {
