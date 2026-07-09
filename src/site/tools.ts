@@ -20,6 +20,13 @@ import {
   type AssetManifest,
 } from "./store";
 import { transpileModule, buildClientBuild } from "./transpile";
+import {
+  allowedScopesDoc,
+  BUILTIN_SPECIFIERS,
+  isAllowedDep,
+  parseBareImports,
+  resolveDep,
+} from "./deps";
 import { buildDraftBundle } from "./serve";
 import {
   extractDocsFromFile,
@@ -147,6 +154,7 @@ export const SITE_TOOLS: SiteTool[] = [
     description:
       "Create or overwrite a site file in the draft tree. TSX/TS/JSX/JS are transpiled immediately (sucrase, preact JSX); transpile errors are returned and the write is REJECTED. Other files (styles.css, *.graphql) are stored as-is. " +
       "After a successful write, every gql`...` document in the file (and standalone *.graphql files) is VALIDATED against the live CMS schema; any problems come back in a `graphqlErrors` block (with precise messages like `Cannot query field \"x\" on type \"BlogPostRecord\". Did you mean \"y\"?`). These are NON-FATAL — the file is still saved so you can write a component before its query is finished — but fix them before publish_site, which hard-gates on the same validation. " +
+      "You may also `import` from resolver-allowlisted npm packages (currently the `drizzle-orm` scope and its subpaths): Loki resolves them via esm.sh at write time, snapshots a self-contained version-pinned copy, and returns a `resolvedDeps` block. Resolving a package for the FIRST time may take a few seconds (crawl + store); an unknown bare specifier, or one needing Node built-ins, is REJECTED. " +
       "For typed authoring, read the `schema_types` tool output and `import type { BlogPostRecord } from \"loki/schema\"`.",
     inputSchema: {
       path: z.string().describe("Repo-relative path, e.g. routes/index.tsx or styles.css"),
@@ -164,6 +172,50 @@ export const SITE_TOOLS: SiteTool[] = [
       if (!clientBuild.ok) {
         return errorResult(`Write rejected for ${path}:\n${clientBuild.error}`);
       }
+
+      // Dependency resolution (npm-dep spike). Detect bare specifiers this file
+      // imports. Loki built-ins (preact family, loki/runtime, loki/schema) are
+      // injected already. Allowlisted deps (drizzle-orm scope) are resolved +
+      // snapshotted via esm.sh in the supervisor NOW so the pin is recorded
+      // before publish. An unknown bare specifier, or a resolution/compat
+      // failure, REJECTS the write (like a transpile error) so the tree never
+      // holds an unresolvable import. This mirrors the write-time gql ethos.
+      const resolvedDeps: Array<{
+        specifier: string;
+        version: string;
+        files: number;
+        bytes: number;
+        loadable: true;
+      }> = [];
+      for (const specifier of parseBareImports(source)) {
+        if (BUILTIN_SPECIFIERS.has(specifier)) continue;
+        if (!isAllowedDep(specifier)) {
+          return errorResult(
+            `Write rejected for ${path}: unknown import "${specifier}". ` +
+              `Allowed imports are the Loki built-ins (preact, preact/hooks, ` +
+              `preact/jsx-runtime, preact-render-to-string, loki/runtime, ` +
+              `loki/schema) and resolver-allowlisted npm packages: ` +
+              `${allowedScopesDoc()} (and their subpaths). To add a package, ` +
+              `it must be ESM and workerd-compatible without node builtins.`,
+          );
+        }
+        try {
+          const dep = await resolveDep(env, specifier);
+          resolvedDeps.push({
+            specifier: dep.specifier,
+            version: dep.version,
+            files: dep.files,
+            bytes: dep.bytes,
+            loadable: true,
+          });
+        } catch (err) {
+          return errorResult(
+            `Write rejected for ${path}: could not resolve dependency ` +
+              `"${specifier}" via esm.sh:\n${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
+
       await writeFile(
         env,
         path,
@@ -174,7 +226,20 @@ export const SITE_TOOLS: SiteTool[] = [
       const stubNote = clientBuild.clientCompiled
         ? ", serverFn module (browser gets a stub build)"
         : "";
-      const base = `Wrote ${path} (${source.length} bytes${result.code ? ", transpiled" : ""}${stubNote}).`;
+      const depNote =
+        resolvedDeps.length > 0
+          ? `\nresolvedDeps (${resolvedDeps.length}, snapshotted via esm.sh — ` +
+            `version-pinned, self-contained):\n` +
+            resolvedDeps
+              .map(
+                (d) =>
+                  `  - ${d.specifier}@${d.version}  (${d.files} file${
+                    d.files === 1 ? "" : "s"
+                  }, ${d.bytes} bytes, loadable)`,
+              )
+              .join("\n")
+          : "";
+      const base = `Wrote ${path} (${source.length} bytes${result.code ? ", transpiled" : ""}${stubNote}).${depNote}`;
 
       // Write-time gql validation: extract this file's documents and validate
       // them against the live schema so field/type mistakes surface NOW, not at

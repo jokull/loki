@@ -13,6 +13,11 @@
       "database_name": "loki-cms",
       "database_id": "28979086-bf7d-4a94-91f9-4ca0c5c36db2",
       "migrations_dir": "migrations"
+    },
+    {
+      "binding": "FEATURES_DB",
+      "database_name": "loki-features",
+      "database_id": "f4c55fce-3a91-4502-b80e-cea42be9dae8"
     }
   ],
   "worker_loaders": [

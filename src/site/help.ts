@@ -253,6 +253,93 @@ Push live updates to connected browsers over WebSockets.
   \`{ close }\` for cleanup. It THROWS if called during SSR — call it in a
   \`useEffect\`.
 
+## Package dependencies (npm imports — no install, no bundler)
+
+You can \`import\` from a real npm package. There is NO \`npm install\` and NO bundler
+step: when you \`site_write\` a file, Loki (which has network) RESOLVES each bare
+import via esm.sh in the supervisor, crawls the module graph, and SNAPSHOTS a
+self-contained, version-pinned copy into R2. \`site_write\` returns a \`resolvedDeps\`
+block — \`[{ specifier, version, files, bytes, loadable }]\` — so you see exactly
+what got pinned. The pin is recorded per draft and snapshotted into the published
+version, so preview / publish / rollback all serve byte-identical dependency code
+(reproducible; no drift). Resolving a package the FIRST time takes a few seconds
+(the crawl + store); re-importing an already-resolved package is instant.
+
+CURRENT ALLOWLIST (spike): only \`drizzle-orm\` and its subpaths (e.g.
+\`drizzle-orm/sqlite-proxy\`, \`drizzle-orm/sqlite-core\`) are resolvable. Any OTHER
+bare specifier is REJECTED at \`site_write\` with a message naming the allowed scope
+and the Loki built-ins — the draft tree never holds an unresolvable import (same
+ethos as write-time gql validation).
+
+CONSTRAINTS — the ceiling of what can be imported:
+- ESM + workerd-compatible ONLY. The isolate has NO \`nodejs_compat\`. A package
+  that needs a Node built-in (\`fs\`, \`net\`, real \`crypto\` module, etc.) will FAIL
+  to load — that failure is the correct signal it isn't usable here. (esm.sh's
+  pure-JS polyfills like Buffer DO link; a polyfill that itself pulls a \`node:\`
+  builtin does not.)
+- No outbound network from the isolate regardless — a package that phones home
+  won't work.
+- Deps imported inside a serverFn module are SERVER-ONLY: serverFn modules are
+  stubbed in the browser build, so the dependency code is NEVER shipped to the
+  client. (This is exactly why the feature-DB \`drizzle\` import below is
+  zero-cost on the client.)
+
+## Feature database (Drizzle over sqlite-proxy)
+
+Loki gives serverFns a separate SQL FEATURE DATABASE (SQLite/D1), distinct from
+the CMS content. Query it with drizzle-orm via the \`featuresDriver(env)\` helper —
+no raw SQL, no driver boilerplate:
+
+    // functions/signups.ts  (a serverFn module — server-only)
+    import { drizzle } from "drizzle-orm/sqlite-proxy";
+    import { sqliteTable, text, integer } from "drizzle-orm/sqlite-core";
+    import { featuresDriver, serverFn } from "loki/runtime";
+
+    // MUST match the existing table — Loki does NOT create it (see below).
+    const signups = sqliteTable("signups", {
+      id: integer("id").primaryKey(),
+      email: text("email").notNull(),
+      // created_at is DB-defaulted — OMITTED here so drizzle never inserts NULL.
+    });
+
+    export const addSignup = serverFn({ method: "POST" })
+      .validator((i: any) => ({ email: String(i?.email || "").trim().slice(0, 200) }))
+      .handler(async ({ data, env }): Promise<{ ok: true }> => {
+        const db = drizzle(featuresDriver(env), { schema: { signups } });
+        await db.insert(signups).values({ email: data.email });
+        return { ok: true };
+      });
+
+    export const listSignups = serverFn()
+      .handler(async ({ env }): Promise<{ id: number; email: string }[]> => {
+        const db = drizzle(featuresDriver(env), { schema: { signups } });
+        return db.select().from(signups).all();   // .get() for a single row
+      });
+
+CRITICAL — read before using:
+- (a) TABLES ARE NOT CREATED BY LOKI. The feature-DB schema is managed
+  OUT-OF-BAND by the site owner (drizzle-kit / atlas against the features DB).
+  There is NO migration/table-creation path here — Loki provides QUERY access
+  only. Your drizzle table definitions must MATCH the columns that already exist,
+  or queries fail at runtime. (Ask the owner / inspect the real schema first.)
+- (b) OMIT DB-DEFAULTED COLUMNS (like \`created_at TEXT DEFAULT ...\`) from your
+  drizzle table, OR give them \`.default(...)\`. If you declare such a column with
+  no default and don't set it on insert, drizzle inserts an explicit \`NULL\`,
+  which violates a \`NOT NULL\` / breaks the DB default. Only model the columns you
+  actually read/write.
+- (c) SERVER-ONLY. \`featuresDriver(env)\` works only inside a serverFn handler or a
+  route loader (it reads \`env\`); the browser build throws. Construct \`drizzle(...)\`
+  inside the handler — never at module top level (no \`env\` there).
+- (d) RAW SQL / RAW DB IS INTENTIONALLY NOT EXPOSED. There is no \`env.FEATURES_DB\`
+  and no query-string API. Everything goes through drizzle over the mediated
+  \`sqlite-proxy\` RPC — that RPC IS the isolation boundary (a raw D1 handle can't
+  cross into the isolate). Use drizzle's query builder; that is the whole surface.
+
+The \`featuresDriver(env)\` returns the async callback drizzle's sqlite-proxy driver
+expects and handles the positional row-shape mapping for you — \`.get()\` yields one
+row, \`.all()\`/\`.select()\` yield rows, inserts/updates \`.run()\` — so columns map
+correctly with no manual plumbing.
+
 ## Imports available
 
 - \`preact\`, \`preact/hooks\`, \`preact/jsx-runtime\` (JSX is auto-configured for preact).
@@ -262,17 +349,24 @@ Push live updates to connected browsers over WebSockets.
   \`renderStructuredText(value)\` (renders a Structured Text DAST value to Preact vnodes),
   \`Island\` (the client-hydration helper — see "Islands" below),
   \`serverFn({...}).validator(...).handler(...)\` (a typed, validated server function
-  callable from a loader OR a browser island — see "Server functions" below), and
+  callable from a loader OR a browser island — see "Server functions" below),
+  \`featuresDriver(env)\` (drizzle sqlite-proxy driver for the feature DB, server-only —
+  see "Feature database" above), and
   \`connectChannel(name, onMessage)\` (client-only realtime subscription — see
   "Realtime" below).
+- Resolver-allowlisted npm packages: \`drizzle-orm\` and its subpaths (resolved via
+  esm.sh at write time — see "Package dependencies" above).
 - \`loki/schema\` (TYPE IMPORTS ONLY) -> content types generated from the live
   schema: \`import type { BlogPostRecord, Query } from "loki/schema"\`. See "Typed
   content" below; read the exact shapes with the \`schema_types\` tool.
 - Relative imports between your own files must include the extension, e.g.
   \`import { Layout } from "./components/layout.tsx"\`.
 
-Do NOT rely on network access, \`process\`, or Node built-ins — the site runs in an
-isolated worker with no outbound fetch except the GraphQL binding.
+Do NOT rely on arbitrary network access, \`process\`, or Node built-ins — the site
+runs in an isolated worker (no \`nodejs_compat\`) whose only capabilities are the
+\`env\` bindings (GRAPHQL / RECORDS / REALTIME / FEATURES_SQL, the last reached via
+\`featuresDriver\`). Imported npm packages must be pure-ESM + workerd-compatible for
+the same reason (see "Package dependencies").
 
 ## Typed content (schema_types + loki/schema)
 

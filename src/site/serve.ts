@@ -13,11 +13,14 @@ import type { Env } from "../env";
 import { buildWorkerCode, RUNTIME_VERSION, type Bundle } from "./bundle";
 import { serveModule, serveVendor } from "./assets";
 import { serveStaticAsset } from "./static-assets";
+import { assembleDeps, draftDepSnapshot } from "./deps";
 import {
   getPublishedVersionId,
   getVersion,
   getState,
   listFiles,
+  versionDepSnapshot,
+  type DepSnapshot,
 } from "./store";
 
 const PREVIEW_COOKIE = "loki_preview";
@@ -103,8 +106,13 @@ async function runSite(
   includeDrafts: boolean,
   request: Request,
   islandBase: string,
+  deps: DepSnapshot,
 ): Promise<Response> {
-  const built = buildWorkerCode(bundle);
+  // Assemble resolved npm deps (esm.sh snapshots) into the isolate module map.
+  // Loads content-addressed bytes from R2 (cached per isolate). Deps are pinned
+  // per bundle so published/preview/rollback serve identical bytes.
+  const assembled = await assembleDeps(env, deps);
+  const built = buildWorkerCode(bundle, assembled);
   const graphql = makeGraphqlBinding(ctx, includeDrafts);
   const exports = ctxExports(ctx);
   const workerEnv: Record<string, unknown> = {
@@ -122,6 +130,12 @@ async function runSite(
   // Realtime fan-out: REALTIME.publish(channel, message).
   if (exports?.RealtimeEntrypoint) {
     workerEnv.REALTIME = exports.RealtimeEntrypoint({});
+  }
+  // Feature-DB SQL capability (mediated D1): a raw D1Database can't cross the
+  // Worker-Loader env (DataCloneError), so serverFns reach FEATURES_DB via this
+  // WorkerEntrypoint's async exec() RPC — e.g. through drizzle's sqlite-proxy.
+  if (exports?.FeaturesDbEntrypoint) {
+    workerEnv.FEATURES_SQL = exports.FeaturesDbEntrypoint({});
   }
   const stub = env.LOADER.get(loaderId, () => ({
     compatibilityDate: built.compatibilityDate,
@@ -160,6 +174,7 @@ export async function smokeRender(
     true,
     new Request("https://loki.internal/"),
     "/__modules/draft",
+    await draftDepSnapshot(env, bundle),
   );
 }
 
@@ -215,8 +230,17 @@ export async function serveDraft(
 ): Promise<Response> {
   const bundle = await buildDraftBundle(env);
   if (Object.keys(bundle).length === 0) return placeholder();
-  const id = `draft:${RUNTIME_VERSION}:${await sha256Hex(stableStringify(bundle))}`;
-  return runSite(env, ctx, id, bundle, true, request, "/__modules/draft");
+  const deps = await draftDepSnapshot(env, bundle);
+  const id = `draft:${RUNTIME_VERSION}:${await sha256Hex(stableStringify(bundle))}:${depFingerprint(deps)}`;
+  return runSite(env, ctx, id, bundle, true, request, "/__modules/draft", deps);
+}
+
+/** Stable fingerprint of a dep snapshot (specifier@depHash pairs). */
+function depFingerprint(deps: DepSnapshot): string {
+  return Object.keys(deps)
+    .sort()
+    .map((s) => `${s}@${deps[s].depHash.slice(0, 12)}`)
+    .join(",");
 }
 
 /** Serve the currently published site version. */
@@ -238,6 +262,7 @@ export async function servePublished(
     false,
     request,
     `/__modules/v${versionId}`,
+    versionDepSnapshot(version),
   );
 }
 
