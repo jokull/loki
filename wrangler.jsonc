@@ -7,6 +7,11 @@
   "vars": {
     "ENVIRONMENT": "production"
   },
+  "workers_dev": true,
+  "routes": [
+    { "pattern": "loftur.app", "custom_domain": true },
+    { "pattern": "*.loftur.app/*", "zone_name": "loftur.app" }
+  ],
   "d1_databases": [
     {
       "binding": "DB",

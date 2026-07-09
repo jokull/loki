@@ -185,7 +185,11 @@ export default {
     const host = effectiveHost(request, url);
 
     // (1) Apex (loftur.app / www) -> the Loftur control plane (signup, keys).
+    // The MCP endpoint is also served here: it resolves the site from the bearer
+    // key alone, so an agent can connect at loftur.app/mcp without waiting on the
+    // per-subdomain wildcard DNS. (The branded {sub}.loftur.app/mcp also works.)
     if (host === APEX || host === `www.${APEX}`) {
+      if (pathname === "/mcp") return handleMcp(request, env, ctx);
       return handleControlPlane(request, env);
     }
 
