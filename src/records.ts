@@ -59,7 +59,17 @@ function extractRecordId(result: McpToolResult): string | null {
   return null;
 }
 
-async function modelHasDraft(env: Env, modelApiKey: string): Promise<boolean> {
+async function modelHasDraft(
+  env: Env,
+  siteId: string,
+  modelApiKey: string,
+): Promise<boolean> {
+  // Per-site: the default site's models live in the shared D1; a tenant's live
+  // in its own TenantDB SQLite.
+  if (siteId !== DEFAULT_SITE_ID) {
+    const stub = env.TENANT_DB.get(env.TENANT_DB.idFromName(siteId));
+    return await stub.modelHasDraft(modelApiKey);
+  }
   const row = await env.DB.prepare(
     "SELECT has_draft FROM models WHERE api_key = ?",
   )
@@ -109,7 +119,7 @@ export class RecordsEntrypoint extends WorkerEntrypoint<Env, RecordsProps> {
 
     // Draft-enabled models create as draft; publish so published GraphQL sees it.
     // (Required-field validation for draft models is enforced here, at publish.)
-    if (await modelHasDraft(this.env, modelApiKey)) {
+    if (await modelHasDraft(this.env, siteId, modelApiKey)) {
       let published: McpToolResult;
       try {
         published = await callCmsTool(this.env, siteId, "set_publish_status", {

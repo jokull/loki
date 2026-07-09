@@ -141,10 +141,10 @@ async function runSite(
   } else if (exports?.TenantFeaturesEntrypoint) {
     workerEnv.FEATURES_SQL = exports.TenantFeaturesEntrypoint({ props: { siteId } });
   }
-  // Scoped record WRITES stay default-only in this v2 slice (per-tenant record
-  // writes via the tenant's DO are the next increment; tenant sites author
-  // content through the MCP tools, which already route to the tenant's DO).
-  if (isDefault && exports?.RecordsEntrypoint) {
+  // Scoped record WRITES, per-site: RECORDS.create routes to the resolved site's
+  // CMS (default → shared, tenant → its DO), gated by the serving tree's
+  // loki.config.json writableModels allowlist.
+  if (exports?.RecordsEntrypoint) {
     workerEnv.RECORDS = exports.RecordsEntrypoint({
       props: { allowlist: parseWritableModels(bundle), siteId },
     });

@@ -204,6 +204,22 @@ export class TenantDB extends DurableObject<Env> {
     return { status: res.status, headers: outHeaders, body: await res.text() };
   }
 
+  /** All content-model api_keys in this tenant's CMS (for config validation). */
+  async modelApiKeys(): Promise<string[]> {
+    return this.sqlStore
+      .exec("SELECT api_key FROM models")
+      .toArray()
+      .map((r: any) => r.api_key as string);
+  }
+
+  /** Whether a content model has drafts enabled (for RECORDS publish-on-create). */
+  async modelHasDraft(modelApiKey: string): Promise<boolean> {
+    const rows = this.sqlStore
+      .exec("SELECT has_draft FROM models WHERE api_key = ?", modelApiKey)
+      .toArray();
+    return rows.length > 0 && (rows[0] as any).has_draft === 1;
+  }
+
   /** Cheap health/inspection: table names in this tenant's SQLite. */
   async tables(): Promise<string[]> {
     return this.sqlStore

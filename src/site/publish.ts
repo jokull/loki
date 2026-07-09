@@ -19,6 +19,7 @@ import { buildDraftBundle, smokeRender } from "./serve";
 import { draftDepSnapshot } from "./deps";
 import { buildClientBuild, isTranspilable } from "./transpile";
 import {
+  DEFAULT_SITE_ID,
   buildDraftAssetManifest,
   insertVersion,
   listFiles,
@@ -217,10 +218,19 @@ export async function validateSiteConfig(
   }
   if (wm.length === 0) return { ok: true, models: [] };
 
-  const { results } = await env.DB.prepare(
-    "SELECT api_key FROM models",
-  ).all<{ api_key: string }>();
-  const known = new Set((results ?? []).map((r) => r.api_key));
+  // Model list is per-site: default site → shared D1; tenant → its own CMS (DO).
+  let modelKeys: string[];
+  if (siteId === DEFAULT_SITE_ID) {
+    const { results } = await env.DB.prepare(
+      "SELECT api_key FROM models",
+    ).all<{ api_key: string }>();
+    modelKeys = (results ?? []).map((r) => r.api_key);
+  } else {
+    modelKeys = await env.TENANT_DB.get(
+      env.TENANT_DB.idFromName(siteId),
+    ).modelApiKeys();
+  }
+  const known = new Set(modelKeys);
   const missing = (wm as string[]).filter((m) => !known.has(m));
   if (missing.length) {
     return {
