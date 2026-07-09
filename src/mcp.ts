@@ -16,8 +16,28 @@ import type { Env } from "./env";
 import { callCmsTool, listCmsTools } from "./cms-bridge";
 import { GUARDED_TOOLS, guardSchemaOp } from "./guard";
 import { SITE_TOOLS, type SiteTool } from "./site/tools";
-import { getSiteByApiKey } from "./tenants";
+import { getSiteByApiKey, getSiteToken } from "./tenants";
 import { DEFAULT_SITE_ID } from "./site/store";
+
+/**
+ * EDITOR role toolset: maintain CONTENT + upload images, but NO schema changes
+ * and NO code. Loftur read tools (query/introspect) + agent-cms content & asset
+ * tools; everything schema/code/site-config is owner-only. New tools default to
+ * owner-only (allowlist, not denylist).
+ */
+const EDITOR_SITE_TOOLS = new Set(["graphql_query", "schema_types"]);
+const EDITOR_CMS_TOOLS = new Set([
+  "schema_info",
+  "create_record", "update_record", "delete_record", "get_record",
+  "query_records", "bulk_create_records", "patch_blocks", "remove_block",
+  "set_publish_status", "schedule", "record_versions", "reorder_records",
+  "create_asset_upload_url", "upload_asset", "import_asset_from_url",
+  "list_assets", "replace_asset", "search_content", "get_preview_url",
+  "get_site_settings",
+]);
+function editorAllows(name: string): boolean {
+  return EDITOR_SITE_TOOLS.has(name) || EDITOR_CMS_TOOLS.has(name);
+}
 
 /** Extract the bearer token from an Authorization header (Bearer or bare). */
 function bearerToken(request: Request): string | null {
@@ -79,21 +99,32 @@ function siteToolResultToMcp(result: {
  * identical across sites, so tools/list reads them from the default site's CMS
  * (avoids booting a tenant DO just to enumerate tools); calls route per-site.
  */
-function buildServer(env: Env, ctx: ExecutionContext, siteId: string): Server {
+function buildServer(
+  env: Env,
+  ctx: ExecutionContext,
+  siteId: string,
+  role: "owner" | "editor",
+): Server {
   const server = new Server(
     { name: "loftur", version: "0.1.0" },
     { capabilities: { tools: {} } },
   );
+  const isEditor = role === "editor";
 
   server.setRequestHandler(ListToolsRequestSchema, async () => {
-    const siteToolDefs = SITE_TOOLS.map((t) => ({
+    const siteToolDefs = SITE_TOOLS.filter(
+      (t) => !isEditor || EDITOR_SITE_TOOLS.has(t.name),
+    ).map((t) => ({
       name: t.name,
       description: t.description,
       inputSchema: shapeToJsonSchema(t.inputSchema) as any,
     }));
     let cmsTools: any[] = [];
     try {
-      cmsTools = await listCmsTools(env, DEFAULT_SITE_ID);
+      const all = await listCmsTools(env, DEFAULT_SITE_ID);
+      cmsTools = isEditor
+        ? all.filter((t) => EDITOR_CMS_TOOLS.has(t.name))
+        : all;
     } catch (err) {
       // Surface CMS bridge failure as a pseudo-tool so tools/list still returns
       // Loki's own tools rather than 500-ing the whole endpoint.
@@ -113,6 +144,18 @@ function buildServer(env: Env, ctx: ExecutionContext, siteId: string): Server {
   server.setRequestHandler(CallToolRequestSchema, async (req) => {
     const name = req.params.name;
     const args = (req.params.arguments ?? {}) as Record<string, unknown>;
+
+    if (isEditor && !editorAllows(name)) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Tool "${name}" is not available to an editor token — editors can maintain content and upload images, but not change the schema or code. Ask the site owner.`,
+          },
+        ],
+        isError: true,
+      };
+    }
 
     const siteTool: SiteTool | undefined = SITE_TOOLS.find(
       (t) => t.name === name,
@@ -169,20 +212,27 @@ export async function handleMcp(
   const token = bearerToken(request);
   if (!token) return unauthorized();
 
-  // Resolve which site this key drives:
-  //  - the legacy admin WRITE_KEY -> the default site (shared agent-cms);
-  //  - a tenant API key -> that tenant's site (its own agent-cms in its TenantDB).
-  // Both get the full toolset; content tools route to the resolved site's CMS.
+  // Resolve which site + ROLE this token drives:
+  //  - legacy admin WRITE_KEY -> the default site, owner;
+  //  - a site OWNER key -> that site, full toolset (schema + content + code);
+  //  - a scoped editor token -> that site, editor toolset (content + images only).
   let siteId: string;
+  let role: "owner" | "editor" = "owner";
   if (env.WRITE_KEY && token === env.WRITE_KEY) {
     siteId = DEFAULT_SITE_ID;
   } else {
     const site = await getSiteByApiKey(env, token);
-    if (!site) return unauthorized();
-    siteId = site.id;
+    if (site) {
+      siteId = site.id;
+    } else {
+      const scoped = await getSiteToken(env, token);
+      if (!scoped) return unauthorized();
+      siteId = scoped.site_id;
+      role = scoped.role === "owner" ? "owner" : "editor";
+    }
   }
 
-  const server = buildServer(env, ctx, siteId);
+  const server = buildServer(env, ctx, siteId, role);
   const handler = createMcpHandler(server, {
     route: "/mcp",
     sessionIdGenerator: undefined, // stateless

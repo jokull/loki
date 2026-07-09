@@ -169,5 +169,83 @@ export async function createSite(
   return { ok: true, site, apiKey };
 }
 
+// ---- scoped tokens (editor) -------------------------------------------------
+
+export type SiteRole = "owner" | "editor";
+
+export interface SiteToken {
+  id: string;
+  site_id: string;
+  token_hash: string;
+  role: string;
+  label: string | null;
+  created_at: string;
+}
+
+/** A fresh editor MCP token. Prefixed `lft_ed_` to distinguish from owner keys. */
+export function generateEditorToken(): string {
+  const bytes = new Uint8Array(24);
+  crypto.getRandomValues(bytes);
+  const hex = [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
+  return `lft_ed_${hex}`;
+}
+
+/** Mint a scoped token for a site (default role: editor). Returns it ONCE. */
+export async function createSiteToken(
+  env: Env,
+  siteId: string,
+  label: string | null,
+  role: SiteRole = "editor",
+): Promise<{ id: string; token: string }> {
+  const id = generateSiteId();
+  const token = generateEditorToken();
+  const hash = await hashApiKey(token);
+  await env.DB.prepare(
+    "INSERT INTO site_tokens (id, site_id, token_hash, role, label) VALUES (?, ?, ?, ?, ?)",
+  )
+    .bind(id, siteId, hash, role, label)
+    .run();
+  return { id, token };
+}
+
+/** Resolve a scoped token to its site + role (null if unknown). */
+export async function getSiteToken(
+  env: Env,
+  token: string,
+): Promise<SiteToken | null> {
+  const hash = await hashApiKey(token);
+  return await env.DB.prepare(
+    "SELECT id, site_id, token_hash, role, label, created_at FROM site_tokens WHERE token_hash = ?",
+  )
+    .bind(hash)
+    .first<SiteToken>();
+}
+
+export async function listSiteTokens(
+  env: Env,
+  siteId: string,
+): Promise<Array<Omit<SiteToken, "token_hash">>> {
+  const { results } = await env.DB.prepare(
+    "SELECT id, site_id, role, label, created_at FROM site_tokens WHERE site_id = ? ORDER BY created_at DESC",
+  )
+    .bind(siteId)
+    .all<Omit<SiteToken, "token_hash">>();
+  return results ?? [];
+}
+
+/** Revoke a token by id, scoped to the site (so an editor can't revoke another site's). */
+export async function revokeSiteToken(
+  env: Env,
+  siteId: string,
+  id: string,
+): Promise<boolean> {
+  const res = await env.DB.prepare(
+    "DELETE FROM site_tokens WHERE site_id = ? AND id = ?",
+  )
+    .bind(siteId, id)
+    .run();
+  return (res.meta?.changes ?? 0) > 0;
+}
+
 /** Re-export for callers that need the legacy id. */
 export { DEFAULT_SITE_ID };

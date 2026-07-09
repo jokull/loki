@@ -35,7 +35,12 @@ import {
 import { getSchemaBundle } from "./schema-types";
 import { runShell, resetDraft, formatShellResult } from "./shell";
 import { SITE_HELP } from "./help";
-import { siteOrigin } from "../tenants";
+import {
+  siteOrigin,
+  createSiteToken,
+  listSiteTokens,
+  revokeSiteToken,
+} from "../tenants";
 import type { Bundle } from "./bundle";
 import {
   assetServingUrl,
@@ -775,6 +780,69 @@ export const SITE_TOOLS: SiteTool[] = [
       } catch (err) {
         return errorResult(`feature_query failed: ${err instanceof Error ? err.message : String(err)}`);
       }
+    },
+  },
+  {
+    name: "create_editor_token",
+    description:
+      "Mint a scoped EDITOR token for this site and return an MCP config for it. An " +
+      "editor token lets a content editor connect their own MCP client to maintain " +
+      "CONTENT (create/update/delete records, publish, upload images) — but it CANNOT " +
+      "change the schema (models/fields) or the site's code. Use this to hand a " +
+      "non-developer the keys to the content without the keys to the build. The token " +
+      "is shown ONCE. Manage with list_editor_tokens / revoke_editor_token.",
+    inputSchema: {
+      label: z
+        .string()
+        .optional()
+        .describe("A human label, e.g. the editor's name or role"),
+    },
+    async handler({ label }, { env, siteId }) {
+      const { id, token } = await createSiteToken(env, siteId, label ?? null, "editor");
+      const origin = await siteOrigin(env, siteId, SITE_ORIGIN);
+      const mcpUrl = `${origin}/mcp`;
+      const config = JSON.stringify(
+        {
+          mcpServers: {
+            "loftur-editor": {
+              type: "http",
+              url: mcpUrl,
+              headers: { Authorization: `Bearer ${token}` },
+            },
+          },
+        },
+        null,
+        2,
+      );
+      return text(
+        `Editor token created (id ${id})${label ? ` — “${label}”` : ""}. Shown once:\n\n` +
+          `${token}\n\n` +
+          `Give the editor this MCP config — it exposes CONTENT + image tools only ` +
+          `(no schema, no code):\n${config}`,
+      );
+    },
+  },
+  {
+    name: "list_editor_tokens",
+    description: "List this site's editor tokens (id, label, created). Owner only.",
+    inputSchema: {},
+    async handler(_args, { env, siteId }) {
+      const tokens = await listSiteTokens(env, siteId);
+      if (tokens.length === 0) return text("No editor tokens yet. Mint one with create_editor_token.");
+      return text(
+        tokens
+          .map((t) => `${t.id}  ${t.role}  ${t.created_at}  ${t.label ?? "(no label)"}`)
+          .join("\n"),
+      );
+    },
+  },
+  {
+    name: "revoke_editor_token",
+    description: "Revoke an editor token by its id (from list_editor_tokens). Owner only.",
+    inputSchema: { id: z.string().describe("The token id to revoke") },
+    async handler({ id }, { env, siteId }) {
+      const ok = await revokeSiteToken(env, siteId, id);
+      return ok ? text(`Revoked editor token ${id}.`) : errorResult(`No such editor token: ${id}`);
     },
   },
   {
