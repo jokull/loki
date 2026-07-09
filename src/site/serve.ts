@@ -257,6 +257,29 @@ export async function serveSite(
     return serveModule(env, url.pathname, previewOk);
   }
 
+  // serverFn RPC: /__fn/<scope>/<id>. The scope selects the site tree exactly
+  // like page serving — `draft` (preview cookie required) loads the draft
+  // isolate, `v<N>` the published one. We forward the whole request (incl. the
+  // /__fn/... path) into the SAME isolate a page render uses, so the serverFn
+  // handler receives the identical narrow-capability env. No duplicated wiring.
+  if (url.pathname.startsWith("/__fn/")) {
+    const scope = url.pathname.slice("/__fn/".length).split("/")[0];
+    if (scope === "draft") {
+      const cookie = getCookie(request, PREVIEW_COOKIE);
+      const previewOk = !!cookie && (await isValidPreviewToken(env, cookie));
+      if (!previewOk) {
+        return new Response("Preview cookie required for draft server functions.", {
+          status: 403,
+        });
+      }
+      return serveDraft(env, ctx, request);
+    }
+    if (/^v\d+$/.test(scope)) {
+      return servePublished(env, ctx, request);
+    }
+    return new Response("Bad server-function scope.", { status: 400 });
+  }
+
   if (url.pathname === "/__preview") {
     const token = url.searchParams.get("token") ?? "";
     if (!(await isValidPreviewToken(env, token))) {

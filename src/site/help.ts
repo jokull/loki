@@ -82,6 +82,80 @@ response is \`405 Method Not Allowed\`. Action return values are normalized:
       );
     }
 
+## Server functions: serverFn (the PREFERRED path for forms / mutations / data)
+
+A \`serverFn\` is a typed, validated server function. It is the recommended way to
+do mutations and typed reads — reach for a raw route \`action\` only when you need a
+full \`Response\` (redirects, non-JSON, webhooks). Define it in its own module and
+import it from BOTH a loader (server) and an island (browser):
+
+    // functions/guestbook.ts
+    import { serverFn } from "loki/runtime";
+    import type { GuestbookEntryRecord } from "loki/schema";
+
+    export const createEntry = serverFn({ method: "POST" })
+      .validator((input) => ({
+        name: String(input.name).slice(0, 80),
+        message: String(input.message).slice(0, 500),
+      }))
+      .handler(async ({ data, env }): Promise<{ id: string }> => {
+        const created = await env.RECORDS.create("guestbook_entry", data);
+        if (created.error) throw new Error(created.error);
+        await env.REALTIME.publish("guestbook", { id: created.id, ...data });
+        return { id: created.id };
+      });
+
+    export const recentEntries = serverFn() // method defaults to GET (a read)
+      .handler(async ({ env }): Promise<GuestbookEntryRecord[]> => {
+        const data = await query(env, ENTRIES);
+        return data.allGuestbookEntries;
+      });
+
+- \`.validator(fn)\`: transforms/validates the RAW input into the typed \`data\` your
+  handler receives. If it throws, the RPC call returns \`400\` with the thrown
+  message. Optional (defaults to identity). Its return TYPE is your \`data\` type.
+- \`.handler({ data, env, request })\`: runs IN THE ISOLATE. \`env\` is the site's
+  narrow capability env — the SAME one a loader/render gets: \`env.GRAPHQL\`,
+  \`env.RECORDS\`, \`env.REALTIME\`. There is NO raw DB, NO loader, NO outbound fetch.
+  The return value is JSON-serialized to callers; annotate it (e.g. via
+  \`import type { X } from "loki/schema"\`) so its type flows to the caller.
+- \`method\`: \`"GET"\` (default, for reads) or \`"POST"\` (mutations).
+
+### Two ways to call the SAME imported function
+
+- FROM A LOADER (server-side): just call it — a direct in-isolate call, no HTTP.
+  \`env\` is supplied for you (do NOT pass it):
+
+      // routes/guestbook.tsx
+      import { recentEntries } from "../functions/guestbook.ts";
+      export async function loader() {
+        return { entries: await recentEntries() };
+      }
+
+- FROM AN ISLAND (browser): the SAME import becomes an RPC stub. Calling it does
+  \`POST /__fn/<version>/<id>\` (or \`/__fn/draft/...\` in preview) with \`{ data }\` and
+  returns the parsed result — no full-page reload:
+
+      // components/guestbook.tsx (island)
+      import { createEntry } from "../functions/guestbook.ts";
+      // ...inside a submit handler:
+      const { id } = await createEntry({ name, message });
+
+  This dual behaviour is automatic: the module resolves to the real handler in the
+  isolate and to a fetch stub in the browser (like how \`query()\` is server-only).
+  Each serverFn has a stable id derived from its module path + export name, so warm
+  isolates cache across publishes of unchanged code. serverFns must be NAMED
+  exports and require file-based routing (not the \`main.*\` escape hatch).
+
+### Security (READ THIS)
+
+A serverFn runs SANDBOXED in the site isolate with EXACTLY the capabilities a
+route loader has — \`env.GRAPHQL\` (read), \`env.RECORDS.create\` (gated by
+loki.config.json \`writableModels\`), \`env.REALTIME.publish\` — and nothing else. It
+cannot reach D1, the Worker Loader, or the network directly, and \`env.RECORDS\`
+rejects any model not in your allowlist exactly as it does from a loader. Writing
+a serverFn does NOT escalate privileges beyond what your page code already has.
+
 ## Scoped record writes: env.RECORDS.create
 
 Route actions (and loaders) can create CMS records via \`env.RECORDS\`, but ONLY
@@ -126,7 +200,9 @@ Push live updates to connected browsers over WebSockets.
 - \`loki/runtime\` -> \`gql\` (tag GraphQL documents), \`query(env, document, variables)\`
   (runs a GraphQL query against the CMS; drafts are visible in preview mode),
   \`renderStructuredText(value)\` (renders a Structured Text DAST value to Preact vnodes),
-  \`Island\` (the client-hydration helper — see "Islands" below), and
+  \`Island\` (the client-hydration helper — see "Islands" below),
+  \`serverFn({...}).validator(...).handler(...)\` (a typed, validated server function
+  callable from a loader OR a browser island — see "Server functions" below), and
   \`connectChannel(name, onMessage)\` (client-only realtime subscription — see
   "Realtime" below).
 - \`loki/schema\` (TYPE IMPORTS ONLY) -> content types generated from the live
@@ -271,50 +347,76 @@ Rules & notes:
 - Islands require file-based routing (they don't work under a \`main.*\` escape
   hatch).
 
-## Worked example: live guestbook (action + RECORDS + REALTIME + island)
+## Worked example: live guestbook (serverFn + RECORDS + REALTIME + island)
 
-Wires everything together — a form island POSTs to its route action; the action
-validates, creates a record, and publishes to a channel; the same island
-subscribes and appends new entries live.
+The canonical pattern. A shared \`functions/\` module defines a typed POST serverFn
+(validate -> create record -> publish to a channel); the route loader reads via a
+GET serverFn; the form island calls the POST serverFn on submit (RPC — no reload)
+and subscribes to the channel to append everyone's entries live.
 
     // loki.config.json
     { "writableModels": ["guestbook_entry"] }
 
-    // routes/guestbook.tsx
-    import { gql, query, Island } from "loki/runtime";
+    // functions/guestbook.ts — shared by the loader (server) and island (browser)
+    import { gql, query, serverFn } from "loki/runtime";
+    import type { GuestbookEntryRecord } from "loki/schema";
+
     const ENTRIES = gql\`
       query { allGuestbookEntries(orderBy: _createdAt_DESC, first: 50) { id name message } }
     \`;
-    export async function loader({ env }) {
-      const data = await query(env, ENTRIES);
-      return { entries: data.allGuestbookEntries };
-    }
-    export async function action({ request, env }) {
-      const form = await request.formData();
-      const name = String(form.get("name") || "").trim().slice(0, 80);
-      const message = String(form.get("message") || "").trim().slice(0, 500);
-      if (!name || !message) return new Response("name and message required", { status: 400 });
-      const created = await env.RECORDS.create("guestbook_entry", { name, message });
-      if (created.error) return new Response(created.error, { status: 400 });
-      await env.REALTIME.publish("guestbook", { id: created.id, name, message });
-      return { redirect: "/guestbook" };
+
+    export const recentEntries = serverFn()
+      .handler(async ({ env }): Promise<GuestbookEntryRecord[]> => {
+        const data = await query(env, ENTRIES);
+        return data.allGuestbookEntries;
+      });
+
+    export const createEntry = serverFn({ method: "POST" })
+      .validator((input) => {
+        const name = String(input.name || "").trim().slice(0, 80);
+        const message = String(input.message || "").trim().slice(0, 500);
+        if (!name || !message) throw new Error("name and message are required");
+        return { name, message };
+      })
+      .handler(async ({ data, env }): Promise<{ id: string } & typeof data> => {
+        const created = await env.RECORDS.create("guestbook_entry", data);
+        if (created.error) throw new Error(created.error);
+        await env.REALTIME.publish("guestbook", { id: created.id, ...data });
+        return { id: created.id, ...data };
+      });
+
+    // routes/guestbook.tsx — loader calls the GET serverFn DIRECTLY (in-isolate)
+    import { Island } from "loki/runtime";
+    import { recentEntries } from "../functions/guestbook.ts";
+    export async function loader() {
+      return { entries: await recentEntries() };
     }
     export default function Guestbook({ entries }) {
       return <Island src="components/guestbook.tsx" client="load" entries={entries} />;
     }
 
-    // components/guestbook.tsx  (SSR'd for first paint, hydrated in the browser)
+    // components/guestbook.tsx — island: calls the POST serverFn over RPC on submit
     import { useState, useEffect } from "preact/hooks";
     import { connectChannel } from "loki/runtime";
+    import { createEntry } from "../functions/guestbook.ts";
     export default function Guestbook({ entries }) {
       const [items, setItems] = useState(entries || []);
       useEffect(() => {
         const ch = connectChannel("guestbook", (e) => setItems((cur) => [e, ...cur]));
         return () => ch.close();
       }, []);
+      async function onSubmit(ev) {
+        ev.preventDefault();
+        const f = ev.currentTarget;
+        try {
+          // RPC to the isolate; the channel echo appends it for us.
+          await createEntry({ name: f.name.value, message: f.message.value });
+          f.reset();
+        } catch (err) { alert(String(err.message || err)); }
+      }
       return (
         <section>
-          <form method="post" action="/guestbook">
+          <form onSubmit={onSubmit}>
             <input name="name" required maxLength={80} />
             <input name="message" required maxLength={500} />
             <button>Sign</button>
@@ -324,10 +426,11 @@ subscribes and appends new entries live.
       );
     }
 
-Note: a full-page form POST reloads the page (the action 303-redirects back), so
-the poster sees their entry via the loader; OTHER open browsers get it live over
-the channel. (Progressive enhancement — intercept submit with \`fetch\` to avoid
-the reload — is left to you.)
+The poster's own submit updates the list via the channel echo (no reload); OTHER
+open browsers get it live over the same channel. \`createEntry\` runs the SAME
+validated handler whether reached from a loader or this island — the browser build
+just turns the call into an RPC. (A raw route \`action\` still works as the escape
+hatch when you need a redirect or a non-JSON \`Response\`.)
 
 ## styles.css example
 

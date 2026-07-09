@@ -179,6 +179,112 @@ export function connectChannel() {
   );
 }
 
+// ---- server functions -------------------------------------------------------
+// A serverFn is a typed, validated function that runs IN THIS ISOLATE with the
+// site's narrow capability env (env.GRAPHQL / env.RECORDS / env.REALTIME — the
+// SAME env a route render/loader gets; never raw DB/LOADER). It is callable two
+// ways from the SAME authored import:
+//   - server-side (from a loader): direct in-isolate call, no HTTP;
+//   - browser (from a hydrated island): the client build of this module (see
+//     CLIENT_RUNTIME) turns the import into an RPC stub that POSTs /__fn/...
+// Each serverFn is tagged with a stable id ("<modulePath>#<exportName>") by a
+// transpile-time epilogue that calls __lokiSetId on every exported serverFn; the
+// server registers itself in __serverFns for dispatch, the client stub keeps the
+// id to build its fetch URL.
+
+// Ambient per-request env for DIRECT (in-isolate) serverFn calls from a loader.
+// Every env handed to a given isolate is functionally identical (a published
+// isolate only ever receives published envs, a draft isolate draft envs — same
+// GRAPHQL visibility, same RECORDS allowlist, same REALTIME), so this module
+// global is safe under concurrent requests. The RPC dispatch path threads env
+// EXPLICITLY and never reads this.
+let __requestEnv = null;
+
+// id -> serverFn, populated at module-eval time by the transpile epilogue.
+const __serverFns = Object.create(null);
+
+export function serverFn(config) {
+  const method = String((config && config.method) || "GET").toUpperCase();
+  let validate = function (x) { return x; };
+  let handle = null;
+  let id = null;
+  // Direct in-isolate call (e.g. from a loader): validate + run against the
+  // ambient request env. Errors propagate to the caller unchanged.
+  const fn = async function (input) {
+    const data = await validate(input);
+    if (typeof handle !== "function") {
+      throw new Error("serverFn: .handler() was never set" + (id ? " for " + id : ""));
+    }
+    return handle({ data, env: __requestEnv, request: null });
+  };
+  fn.__isLokiServerFn = true;
+  fn.__lokiMethod = method;
+  fn.validator = function (v) { if (typeof v === "function") validate = v; return fn; };
+  fn.handler = function (h) { handle = h; return fn; };
+  fn.__lokiSetId = function (v) { id = v; fn.__lokiId = v; __serverFns[v] = fn; };
+  // Dispatch used by the RPC endpoint: distinguishes validator (400) from handler
+  // (500) failures and threads env EXPLICITLY (never the ambient global).
+  fn.__lokiDispatch = async function (input, request, env) {
+    let data;
+    try {
+      data = await validate(input);
+    } catch (e) {
+      return { status: 400, error: (e && e.message) ? e.message : String(e) };
+    }
+    if (typeof handle !== "function") {
+      return { status: 500, error: "Server function is not fully defined." };
+    }
+    try {
+      const result = await handle({ data, env, request });
+      return { status: 200, result: result };
+    } catch (e) {
+      console.error("[loki serverFn] handler threw for " + (id || "?"), e);
+      return { status: 500, error: "Server function failed." };
+    }
+  };
+  return fn;
+}
+
+function __fnJson(status, obj) {
+  return new Response(JSON.stringify(obj), {
+    status: status,
+    headers: { "content-type": "application/json; charset=utf-8" },
+  });
+}
+
+// Invoke a registered serverFn over the internal /__fn/<scope>/<id> route. The
+// supervisor loads THIS isolate (the same env a page render gets) and forwards
+// the request here. 404 unknown id, 400 validator throw / bad input, 500 handler
+// throw (logged; generic message to the client).
+export async function handleServerFn(request, env) {
+  __requestEnv = env;
+  const url = new URL(request.url);
+  const m = url.pathname.match(/^\/__fn\/(?:v\d+|draft)\/(.+)$/);
+  if (!m) return __fnJson(404, { error: "Not a server-function route." });
+  const id = decodeURIComponent(m[1]);
+  const fn = __serverFns[id];
+  if (!fn) return __fnJson(404, { error: 'Unknown server function "' + id + '".' });
+  const method = request.method.toUpperCase();
+  let input;
+  if (method === "GET" || method === "HEAD") {
+    const raw = url.searchParams.get("data");
+    if (raw != null) {
+      try { input = JSON.parse(raw); }
+      catch (e) { return __fnJson(400, { error: "Invalid ?data= JSON: " + e.message }); }
+    }
+  } else {
+    let body;
+    try { body = await request.json(); }
+    catch (e) { return __fnJson(400, { error: "Invalid JSON body." }); }
+    input = body ? body.data : undefined;
+  }
+  const out = await fn.__lokiDispatch(input, request, env);
+  if (out.status === 200) {
+    return __fnJson(200, out.result === undefined ? null : out.result);
+  }
+  return __fnJson(out.status, { error: out.error });
+}
+
 // ---- islands (partial hydration) --------------------------------------------
 
 // Populated per-request by handleRequest (see below). Because renderToString is
@@ -396,7 +502,12 @@ function renderHead(head, hasStyles) {
 
 const __ISLAND_BOOTSTRAP = ${JSON.stringify(ISLAND_BOOTSTRAP)};
 
-function renderIslandHead(vendorBase) {
+// /__modules/<scope> -> /__fn/<scope>: the base a client serverFn stub POSTs to.
+function __islandToFnBase(islandBase) {
+  return (islandBase || "/__modules/draft").replace("/__modules/", "/__fn/");
+}
+
+function renderIslandHead(vendorBase, fnBase) {
   const vb = vendorBase || "/__vendor";
   const importMap = {
     imports: {
@@ -408,6 +519,7 @@ function renderIslandHead(vendorBase) {
   };
   return (
     '<script type="importmap">' + JSON.stringify(importMap) + "</script>" +
+    "<script>window.__lokiFnBase=" + JSON.stringify(fnBase || "/__fn/draft") + ";</script>" +
     '<script type="module">' + __ISLAND_BOOTSTRAP + "</script>"
   );
 }
@@ -448,6 +560,8 @@ function normalizeActionResult(result) {
  * config = { routes, styles, islands, vendorBase, islandBase }.
  */
 export async function handleRequest(request, env, ctx, config) {
+  // Ambient env for direct (in-isolate) serverFn calls made from a loader.
+  __requestEnv = env;
   const url = new URL(request.url);
 
   if (url.pathname === "/styles.css") {
@@ -517,7 +631,9 @@ export async function handleRequest(request, env, ctx, config) {
   const bodyHtml = renderToString(
     h(Component, Object.assign({}, props, { params: matched.params })),
   );
-  const islandHead = __islandUsed ? renderIslandHead(config.vendorBase) : "";
+  const islandHead = __islandUsed
+    ? renderIslandHead(config.vendorBase, __islandToFnBase(__islandBase))
+    : "";
 
   const doc =
     "<!doctype html><html><head>" +
@@ -546,6 +662,54 @@ export function renderToString() {
 
 export function Island() {
   throw new Error("Island() is a server-side SSR helper and cannot run in the browser.");
+}
+
+// Browser build of serverFn: the SAME authored \`serverFn(...).validator(...)
+// .handler(...)\` chain loads here, but instead of running the handler it returns
+// an RPC stub. Calling it POSTs (or GETs) /__fn/<scope>/<id> and returns the
+// parsed JSON. The id is assigned by the transpile epilogue (__lokiSetId); the
+// scope base (\`/__fn/v<N>\` or \`/__fn/draft\`) is injected into the page as
+// window.__lokiFnBase alongside the island bootstrap.
+export function serverFn(config) {
+  const method = String((config && config.method) || "GET").toUpperCase();
+  let id = null;
+  const fn = async function (input) {
+    if (!id) {
+      throw new Error(
+        "serverFn: this stub has no id — it must be a NAMED export of its module.",
+      );
+    }
+    const base =
+      (typeof window !== "undefined" && window.__lokiFnBase) || "/__fn/draft";
+    let url = base + "/" + encodeURIComponent(id);
+    const init = { method: method, headers: {} };
+    if (method === "GET" || method === "HEAD") {
+      if (input !== undefined) {
+        url += "?data=" + encodeURIComponent(JSON.stringify(input));
+      }
+    } else {
+      init.headers["content-type"] = "application/json";
+      init.body = JSON.stringify({ data: input });
+    }
+    const res = await fetch(url, init);
+    const bodyText = await res.text();
+    let payload;
+    try { payload = bodyText ? JSON.parse(bodyText) : null; }
+    catch (e) { payload = bodyText; }
+    if (!res.ok) {
+      const msg = payload && payload.error ? payload.error : "HTTP " + res.status;
+      throw new Error("serverFn " + id + ": " + msg);
+    }
+    return payload;
+  };
+  fn.__isLokiServerFn = true;
+  fn.__lokiMethod = method;
+  // Chainable no-ops so the authored \`.validator().handler()\` chain LOADS in the
+  // browser; validation + handling only ever run server-side.
+  fn.validator = function () { return fn; };
+  fn.handler = function () { return fn; };
+  fn.__lokiSetId = function (v) { id = v; fn.__lokiId = v; };
+  return fn;
 }
 
 // Subscribe to a realtime channel from the browser. Opens a WebSocket to

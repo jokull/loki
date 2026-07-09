@@ -63,7 +63,7 @@ export function transpileModule(path: string, source: string): TranspileResult {
           "schema_types tool. Do not use its names as runtime values.",
       };
     }
-    return { ok: true, code: rewritten };
+    return { ok: true, code: withServerFnIds(path, rewritten) };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return { ok: false, error: message };
@@ -74,6 +74,49 @@ export function transpileModule(path: string, source: string): TranspileResult {
 // `import(…)` position (a genuine value import — type-only imports are erased).
 const SCHEMA_SPECIFIER_RE =
   /(\bfrom\s*|\bimport\s*\(\s*)(["'])loki\/schema\2/;
+
+// Named top-level exports (const/let/var/function). Re-export lists and default
+// exports are intentionally out of scope — serverFns must be NAMED exports.
+const EXPORT_NAME_RE =
+  /\bexport\s+(?:async\s+)?(?:const|let|var|function)\s+([A-Za-z_$][\w$]*)/g;
+
+/**
+ * Give every exported serverFn a stable id ("<path>#<exportName>") that is
+ * identical in the isolate (server) and the browser build of the module, since
+ * BOTH execute this same stored compiled text. A tiny epilogue tags each exported
+ * binding that is a serverFn — the server registers itself for RPC dispatch, the
+ * browser stub keeps the id to build its fetch URL. No-op for modules that don't
+ * mention `serverFn` (keeps unrelated modules byte-for-byte unchanged).
+ *
+ * `typeof NAME !== "undefined"` guards make it robust: a name matched inside a
+ * string/comment that isn't a real binding never throws (typeof on an undeclared
+ * identifier is safe), and non-serverFn exports simply lack the brand.
+ */
+function withServerFnIds(path: string, code: string): string {
+  if (!/\bserverFn\b/.test(code)) return code;
+  const names: string[] = [];
+  const seen = new Set<string>();
+  let m: RegExpExecArray | null;
+  EXPORT_NAME_RE.lastIndex = 0;
+  while ((m = EXPORT_NAME_RE.exec(code))) {
+    if (!seen.has(m[1])) {
+      seen.add(m[1]);
+      names.push(m[1]);
+    }
+  }
+  if (names.length === 0) return code;
+  const entries = names
+    .map(
+      (n) =>
+        `[${JSON.stringify(path + "#" + n)},(typeof ${n}!=="undefined"?${n}:null)]`,
+    )
+    .join(",");
+  const epilogue =
+    `\n;(function(){var __f=[${entries}];` +
+    `for(var i=0;i<__f.length;i++){var e=__f[i];` +
+    `if(e[1]&&e[1].__isLokiServerFn&&typeof e[1].__lokiSetId==="function")e[1].__lokiSetId(e[0]);}})();\n`;
+  return code + epilogue;
+}
 
 /**
  * Sucrase's automatic runtime emits `import { jsx } from "preact/jsx-runtime"`.

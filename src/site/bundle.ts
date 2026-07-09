@@ -18,7 +18,7 @@ export type Bundle = Record<string, string>;
 
 // Bump when the runtime shim, vendor modules, or bundle builder change — it is
 // mixed into every LOADER id so cached isolates are invalidated.
-export const RUNTIME_VERSION = "r8";
+export const RUNTIME_VERSION = "r9";
 
 const ENTRY_NAME = "__loki_entry.js";
 const COMPAT_DATE = "2026-07-01";
@@ -194,6 +194,12 @@ ${registry}
 };
 export default {
   fetch(request, env, ctx) {
+    // serverFn RPC invocation: /__fn/<scope>/<id>. Importing every authored
+    // module above ran each one's transpile epilogue, registering its serverFns
+    // in the runtime; dispatch looks them up by id and runs them with THIS env.
+    if (new URL(request.url).pathname.indexOf("/__fn/") === 0) {
+      return __runtime.handleServerFn(request, env);
+    }
     return __runtime.handleRequest(request, env, ctx, {
       routes: __routes,
       styles: __styles,
