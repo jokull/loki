@@ -2,7 +2,7 @@
 
 import { z } from "zod";
 import type { Env } from "../env";
-import { getCms } from "../env";
+import { cmsExecuteFor } from "../cms-dispatch";
 import {
   buildDraftAssetManifest,
   deleteAsset,
@@ -123,10 +123,14 @@ export const SITE_TOOLS: SiteTool[] = [
         .optional()
         .describe("Include draft (unpublished) content; defaults to false"),
     },
-    async handler({ query, variables, includeDrafts }, { env }) {
-      const result = await getCms(env).execute(query, variables ?? {}, {
-        includeDrafts: includeDrafts ?? false,
-      });
+    async handler({ query, variables, includeDrafts }, { env, siteId }) {
+      const result = await cmsExecuteFor(
+        env,
+        siteId,
+        query,
+        variables ?? {},
+        includeDrafts ?? false,
+      );
       return text(JSON.stringify(result, null, 2));
     },
   },
@@ -145,8 +149,8 @@ export const SITE_TOOLS: SiteTool[] = [
       "SAME types importable as `import type { BlogPostRecord, Query } from \"loki/schema\"` " +
       "to annotate loaders and props. Regenerates automatically when the schema changes.",
     inputSchema: {},
-    async handler(_args, { env }) {
-      const { ts, version } = await getSchemaBundle(env);
+    async handler(_args, { env, siteId }) {
+      const { ts, version } = await getSchemaBundle(env, siteId);
       return text(`// schema_version: ${version}\n${ts}`);
     },
   },
@@ -268,7 +272,7 @@ export const SITE_TOOLS: SiteTool[] = [
       if (docs.length === 0) return text(base);
       let problems;
       try {
-        const { schema } = await getSchemaBundle(env);
+        const { schema } = await getSchemaBundle(env, siteId);
         problems = validateDocuments(schema, docs);
       } catch (err) {
         return text(

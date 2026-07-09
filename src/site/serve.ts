@@ -80,8 +80,11 @@ function ctxExports(ctx: ExecutionContext): Record<string, any> {
 function makeGraphqlBinding(
   ctx: ExecutionContext,
   includeDrafts: boolean,
+  siteId: string,
 ): Fetcher {
-  return ctxExports(ctx).GraphqlEntrypoint({ props: { includeDrafts } }) as Fetcher;
+  return ctxExports(ctx).GraphqlEntrypoint({
+    props: { includeDrafts, siteId },
+  }) as Fetcher;
 }
 
 /** Parse the writable-model allowlist from the serving tree's loki.config.json. */
@@ -121,18 +124,21 @@ async function runSite(
     // Version-aware base for island module URLs, read by the runtime shim.
     LOKI_ISLAND_BASE: islandBase,
   };
-  // Shared-data capabilities (agent-cms GraphQL, scoped record writes, and the
-  // shared feature DB) are wired ONLY for the legacy default site. v1 defers
-  // per-tenant content/data, so tenant isolates get NONE of these — they can't
-  // reach another site's data (or the demo's). See PLAN.md.
+  // Content READ capability, per-site: the default site reads the shared CMS; a
+  // tenant reads its OWN agent-cms in its TenantDB (query() in a tenant route
+  // returns only that tenant's content). Wired for every site.
+  const graphql = makeGraphqlBinding(ctx, includeDrafts, siteId);
+  if (graphql) workerEnv.GRAPHQL = graphql;
+  // Scoped record WRITES + the shared feature DB stay default-only in this v2
+  // slice (per-tenant record writes + per-tenant feature DB via
+  // drizzle-orm/durable-sqlite are the next increment). Tenant sites author
+  // content through the MCP tools (which route to the tenant's DO).
   const isDefault = siteId === DEFAULT_SITE_ID;
   if (isDefault) {
-    const graphql = makeGraphqlBinding(ctx, includeDrafts);
-    if (graphql) workerEnv.GRAPHQL = graphql;
     // Scoped record writes: RECORDS.create is gated by this tree's allowlist.
     if (exports?.RecordsEntrypoint) {
       workerEnv.RECORDS = exports.RecordsEntrypoint({
-        props: { allowlist: parseWritableModels(bundle) },
+        props: { allowlist: parseWritableModels(bundle), siteId },
       });
     }
     // Feature-DB SQL capability (mediated D1): a raw D1Database can't cross the

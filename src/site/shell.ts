@@ -117,7 +117,7 @@ async function commitDraftFile(
   const docs = extractDocsFromFile(path, source);
   if (docs.length > 0) {
     try {
-      const { schema } = await getSchemaBundle(env);
+      const { schema } = await getSchemaBundle(env, siteId);
       const problems = validateDocuments(schema, docs);
       for (const p of problems) {
         warnings.push(`${path} (graphql ${p.source}): ${p.errors.join("; ")}`);

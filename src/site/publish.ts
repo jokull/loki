@@ -14,7 +14,7 @@ import {
   type IntrospectionQuery,
 } from "graphql";
 import type { Env } from "../env";
-import { getCms } from "../env";
+import { cmsExecuteFor } from "../cms-dispatch";
 import { buildDraftBundle, smokeRender } from "./serve";
 import { draftDepSnapshot } from "./deps";
 import { buildClientBuild, isTranspilable } from "./transpile";
@@ -84,13 +84,12 @@ export async function extractDocuments(env: Env, siteId: string): Promise<Extrac
   return docs;
 }
 
-export async function introspectSchema(env: Env): Promise<GraphQLSchema> {
-  const cms = getCms(env);
-  const result = await cms.execute(getIntrospectionQuery());
+export async function introspectSchema(env: Env, siteId: string): Promise<GraphQLSchema> {
+  const result = await cmsExecuteFor(env, siteId, getIntrospectionQuery(), {}, false);
   if (result.errors && result.errors.length) {
     throw new Error(
       "Schema introspection failed: " +
-        result.errors.map((e) => e.message).join("; "),
+        result.errors.map((e: { message: string }) => e.message).join("; "),
     );
   }
   return buildClientSchema(result.data as unknown as IntrospectionQuery);
@@ -297,7 +296,7 @@ export async function publishSite(
   // (b) validate against the live schema
   let schema: GraphQLSchema;
   try {
-    schema = await introspectSchema(env);
+    schema = await introspectSchema(env, siteId);
   } catch (err) {
     return {
       ok: false,

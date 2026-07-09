@@ -7,6 +7,7 @@ import { serveSite } from "./site/serve";
 import { handleControlPlane } from "./control";
 import { getSiteBySubdomain } from "./tenants";
 import { DEFAULT_SITE_ID } from "./site/store";
+import { cmsExecuteFor } from "./cms-dispatch";
 
 /** The Loftur apex zone. Subdomains of it are tenant sites. */
 const APEX = "loftur.app";
@@ -50,7 +51,7 @@ export { TenantDB } from "./tenant-db";
  */
 export class GraphqlEntrypoint extends WorkerEntrypoint<
   Env,
-  { includeDrafts?: boolean }
+  { includeDrafts?: boolean; siteId?: string }
 > {
   async fetch(request: Request): Promise<Response> {
     let payload: { query?: string; variables?: Record<string, unknown> };
@@ -66,10 +67,17 @@ export class GraphqlEntrypoint extends WorkerEntrypoint<
       return Response.json({ errors: [{ message: "Missing 'query'" }] });
     }
     const includeDrafts = this.ctx.props?.includeDrafts === true;
-    const cms = getCms(this.env);
-    const result = await cms.execute(payload.query, payload.variables ?? {}, {
+    // Per-site content: the default site uses the shared CMS; a tenant uses its
+    // own agent-cms in its TenantDB. So a tenant route's query() reads ONLY that
+    // tenant's content.
+    const siteId = this.ctx.props?.siteId ?? DEFAULT_SITE_ID;
+    const result = await cmsExecuteFor(
+      this.env,
+      siteId,
+      payload.query,
+      payload.variables ?? {},
       includeDrafts,
-    });
+    );
     return Response.json(result);
   }
 }

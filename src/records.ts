@@ -17,12 +17,15 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
 import type { Env } from "./env";
 import { callCmsTool, type McpToolResult } from "./cms-bridge";
+import { DEFAULT_SITE_ID } from "./site/store";
 
 export type RecordCreateResult = { id: string } | { error: string };
 
 interface RecordsProps {
   /** Model api_keys the serving tree allows writes to (loki.config.json). */
   allowlist?: string[];
+  /** Site whose CMS the writes route to (default site => shared CMS). */
+  siteId?: string;
 }
 
 /** Join an MCP result's text content into a single legible error string. */
@@ -76,6 +79,7 @@ export class RecordsEntrypoint extends WorkerEntrypoint<Env, RecordsProps> {
     fields: Record<string, unknown>,
   ): Promise<RecordCreateResult> {
     const allowlist = this.ctx.props?.allowlist ?? [];
+    const siteId = this.ctx.props?.siteId ?? DEFAULT_SITE_ID;
     if (!allowlist.includes(modelApiKey)) {
       return {
         error:
@@ -87,7 +91,7 @@ export class RecordsEntrypoint extends WorkerEntrypoint<Env, RecordsProps> {
 
     let created: McpToolResult;
     try {
-      created = await callCmsTool(this.env, "create_record", {
+      created = await callCmsTool(this.env, siteId, "create_record", {
         modelApiKey,
         data: fields ?? {},
       });
@@ -108,7 +112,7 @@ export class RecordsEntrypoint extends WorkerEntrypoint<Env, RecordsProps> {
     if (await modelHasDraft(this.env, modelApiKey)) {
       let published: McpToolResult;
       try {
-        published = await callCmsTool(this.env, "set_publish_status", {
+        published = await callCmsTool(this.env, siteId, "set_publish_status", {
           action: "publish",
           modelApiKey,
           recordIds: [id],
