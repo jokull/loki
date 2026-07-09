@@ -41,6 +41,10 @@
       {
         "name": "CHANNELS",
         "class_name": "ChannelDO"
+      },
+      {
+        "name": "TENANT_DB",
+        "class_name": "TenantDB"
       }
     ]
   },
@@ -48,6 +52,10 @@
     {
       "tag": "v1",
       "new_sqlite_classes": ["ChannelDO"]
+    },
+    {
+      "tag": "v2",
+      "new_sqlite_classes": ["TenantDB"]
     }
   ]
 }

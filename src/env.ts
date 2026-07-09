@@ -15,6 +15,12 @@ export interface Env {
   /** Durable Object namespace backing realtime channels (see src/realtime.ts). */
   CHANNELS: DurableObjectNamespace<import("./realtime").ChannelDO>;
   /**
+   * Per-tenant backend DO (SQLite-backed). One instance per site
+   * (idFromName(siteId)) holds that tenant's content (agent-cms) + feature data,
+   * isolated. See src/tenant-db.ts and memory `loftur-per-tenant-data`.
+   */
+  TENANT_DB: DurableObjectNamespace<import("./tenant-db").TenantDB>;
+  /**
    * R2 bucket (`loki-assets`) shared by two independent concerns:
    * - agent-cms content assets (keyed under `uploads/…` by agent-cms itself);
    * - Loki site static/design assets (keyed under `site/blob/<sha256>`, see

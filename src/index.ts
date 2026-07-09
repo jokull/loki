@@ -37,6 +37,7 @@ export type { Env };
 export { ChannelDO, RealtimeEntrypoint } from "./realtime";
 export { RecordsEntrypoint } from "./records";
 export { FeaturesDbEntrypoint } from "./features-db";
+export { TenantDB } from "./tenant-db";
 
 /**
  * Loopback GraphQL entrypoint for the dynamic site worker.
@@ -183,6 +184,43 @@ export default {
     const url = new URL(request.url);
     const { pathname } = url;
     const host = effectiveHost(request, url);
+
+    // (0) Admin-only DO validation probe (WRITE_KEY): exercises a tenant's
+    // SQLite-backed agent-cms end-to-end. Temporary v2 bring-up scaffolding.
+    if (pathname.startsWith("/__tenantdb/")) {
+      const token = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
+      if (!env.WRITE_KEY || token !== env.WRITE_KEY) {
+        return new Response("Unauthorized", { status: 401 });
+      }
+      const name = pathname.slice("/__tenantdb/".length) || "probe";
+      try {
+        const stub = env.TENANT_DB.get(env.TENANT_DB.idFromName(name));
+        const tables = await stub.tables(); // triggers lazy schema bootstrap
+        if (url.searchParams.get("only") === "tables") {
+          return Response.json({ tenant: name, tableCount: tables.length, tables });
+        }
+        const introspection = JSON.parse(
+          await stub.cmsExecute("{ __schema { queryType { name } } }", {}, false),
+        ) as { data?: any; errors?: unknown };
+        return Response.json({
+          tenant: name,
+          tableCount: tables.length,
+          tables,
+          graphqlOk: !!(introspection as any)?.data && !(introspection as any)?.errors,
+          queryType: (introspection as any)?.data?.__schema?.queryType?.name ?? null,
+          errors: (introspection as any)?.errors ?? null,
+        });
+      } catch (err) {
+        return Response.json(
+          {
+            tenant: name,
+            error: err instanceof Error ? err.message : String(err),
+            stack: err instanceof Error ? err.stack?.split("\n").slice(0, 8) : undefined,
+          },
+          { status: 500 },
+        );
+      }
+    }
 
     // (1) Apex (loftur.app / www) -> the Loftur control plane (signup, keys).
     // The MCP endpoint is also served here: it resolves the site from the bearer
