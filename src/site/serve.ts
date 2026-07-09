@@ -22,12 +22,30 @@ import {
 
 const PREVIEW_COOKIE = "loki_preview";
 
-/** Build the draft bundle from the live working tree (site_files). */
+/**
+ * Build the draft bundle for the ISOLATE (server) from the live working tree.
+ * Always the FULL compiled text — serverFn handlers must run server-side.
+ */
 export async function buildDraftBundle(env: Env): Promise<Bundle> {
   const files = await listFiles(env);
   const bundle: Bundle = {};
   for (const f of files) {
     bundle[f.path] = f.compiled ?? f.source;
+  }
+  return bundle;
+}
+
+/**
+ * Build the draft bundle served to the BROWSER (/__modules). serverFn modules
+ * resolve to their synthesized stub (client_compiled) so no handler/validator
+ * source ever reaches the client; everything else is identical to the isolate
+ * text. NEVER feed this to buildWorkerCode — the isolate needs the full build.
+ */
+export async function buildDraftClientBundle(env: Env): Promise<Bundle> {
+  const files = await listFiles(env);
+  const bundle: Bundle = {};
+  for (const f of files) {
+    bundle[f.path] = f.client_compiled ?? f.compiled ?? f.source;
   }
   return bundle;
 }

@@ -712,6 +712,45 @@ export function serverFn(config) {
   return fn;
 }
 
+// Client RPC stub FACTORY. A serverFn module's browser build is fully
+// SYNTHESIZED at write time (see transpile.buildClientBuild): the real handler/
+// validator source is NEVER served to the browser — only, per exported serverFn,
+// a call to this factory with the stable id (\`<modulePath>#<exportName>\`) and its
+// transport method. So the browser can invoke the serverFn over RPC but has no
+// access to its body (no secrets, no gql, no server logic). The isolate build is
+// separate and keeps the full handler for in-isolate execution + /__fn dispatch.
+export function __lokiClientServerFn(id, method) {
+  var m = String(method || "POST").toUpperCase();
+  var fn = async function (input) {
+    var base =
+      (typeof window !== "undefined" && window.__lokiFnBase) || "/__fn/draft";
+    var url = base + "/" + encodeURIComponent(id);
+    var init = { method: m, headers: {} };
+    if (m === "GET" || m === "HEAD") {
+      if (input !== undefined) {
+        url += "?data=" + encodeURIComponent(JSON.stringify(input));
+      }
+    } else {
+      init.headers["content-type"] = "application/json";
+      init.body = JSON.stringify({ data: input });
+    }
+    var res = await fetch(url, init);
+    var bodyText = await res.text();
+    var payload;
+    try { payload = bodyText ? JSON.parse(bodyText) : null; }
+    catch (e) { payload = bodyText; }
+    if (!res.ok) {
+      var msg = payload && payload.error ? payload.error : "HTTP " + res.status;
+      throw new Error("serverFn " + id + ": " + msg);
+    }
+    return payload;
+  };
+  fn.__isLokiServerFn = true;
+  fn.__lokiId = id;
+  fn.__lokiMethod = m;
+  return fn;
+}
+
 // Subscribe to a realtime channel from the browser. Opens a WebSocket to
 // /__realtime/<name> (wss when the page is https), JSON-parses each message and
 // hands it to onMessage, and auto-reconnects with capped exponential backoff.

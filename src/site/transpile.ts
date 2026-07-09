@@ -30,6 +30,23 @@ export interface TranspileResult {
   error?: string;
 }
 
+/** One serverFn export discovered statically in a module's source. */
+export interface ServerFnExport {
+  name: string;
+  /** RPC transport verb the browser stub uses. Defaults to POST. */
+  method: string;
+}
+
+export interface ClientBuildResult {
+  ok: boolean;
+  /**
+   * The text to serve to the BROWSER for this module. `null` when the module
+   * defines no serverFns (browser gets the normal compiled text unchanged).
+   */
+  clientCompiled?: string | null;
+  error?: string;
+}
+
 /**
  * Transpile a single authored module. Non-transpilable files (e.g. `.graphql`,
  * `.css`) are passed through unchanged and never compiled.
@@ -79,6 +96,111 @@ const SCHEMA_SPECIFIER_RE =
 // exports are intentionally out of scope — serverFns must be NAMED exports.
 const EXPORT_NAME_RE =
   /\bexport\s+(?:async\s+)?(?:const|let|var|function)\s+([A-Za-z_$][\w$]*)/g;
+
+// A serverFn export in its documented authored form:
+//   export const NAME = serverFn({ method?: "..." }).validator(...).handler(...)
+// Captures the export name and the (optional) config object literal so we can
+// read `method`. Parsed from SOURCE (not the compiled text) — the shape is the
+// contract we document, so this is deliberately simple and robust.
+const SERVERFN_EXPORT_RE =
+  /\bexport\s+const\s+([A-Za-z_$][\w$]*)\s*(?::[^=]+?)?=\s*serverFn\b\s*(?:<[^>]*>)?\s*\(([^)]*)\)/g;
+
+const SERVERFN_METHOD_RE = /\bmethod\s*:\s*["'`]([A-Za-z]+)["'`]/;
+
+/**
+ * Statically enumerate the serverFn exports of a module from its SOURCE, with
+ * each one's declared RPC method (default POST). Only the documented authored
+ * form is recognised — `export const NAME = serverFn({ method? }).…`.
+ */
+export function parseServerFnExports(source: string): ServerFnExport[] {
+  const out: ServerFnExport[] = [];
+  const seen = new Set<string>();
+  let m: RegExpExecArray | null;
+  SERVERFN_EXPORT_RE.lastIndex = 0;
+  while ((m = SERVERFN_EXPORT_RE.exec(source))) {
+    const name = m[1];
+    if (seen.has(name)) continue;
+    seen.add(name);
+    const config = m[2] || "";
+    const method = (SERVERFN_METHOD_RE.exec(config)?.[1] || "POST").toUpperCase();
+    out.push({ name, method });
+  }
+  return out;
+}
+
+/** Synthesize the browser-served stub module for a serverFn module. */
+function synthesizeClientStub(path: string, fns: ServerFnExport[]): string {
+  const lines = fns.map(
+    (f) =>
+      `export const ${f.name} = __lokiClientServerFn(` +
+      `${JSON.stringify(path + "#" + f.name)},${JSON.stringify(f.method)});`,
+  );
+  return (
+    'import { __lokiClientServerFn } from "loki/runtime";\n' +
+    lines.join("\n") +
+    "\n"
+  );
+}
+
+/**
+ * Build the BROWSER-served text for a module. If the module defines any
+ * serverFns, the browser must NOT receive the real handler/validator source
+ * (it can contain secrets, gql strings, and server-only logic). Instead we
+ * synthesize a stub module that exports only client RPC bindings keyed by each
+ * serverFn's stable id + method — the isolate build stays full and unchanged.
+ *
+ * Convention (enforced): a serverFn module exports ONLY serverFns (and types).
+ * Because the client build is fully synthesized from the serverFn export list,
+ * any OTHER value export would silently vanish from the browser build — so we
+ * REJECT it at write time and tell the author to move the serverFn(s) into their
+ * own module (e.g. under `functions/`). Type-only exports are erased at
+ * transpile and are fine.
+ *
+ * Returns `{ clientCompiled: null }` for modules with no serverFns.
+ */
+export function buildClientBuild(path: string, source: string): ClientBuildResult {
+  if (!isTranspilable(path)) return { ok: true, clientCompiled: null };
+  const fns = parseServerFnExports(source);
+  if (fns.length === 0) return { ok: true, clientCompiled: null };
+
+  // Collision guard: every VALUE export must be a serverFn. Value exports are
+  // const/let/var/function named exports; `export default` and `export { … }`
+  // lists are also value exports (and unsupported for serverFns). `export type`
+  // / `export interface` are erased at transpile, so they never reach here.
+  const serverFnNames = new Set(fns.map((f) => f.name));
+  const offenders: string[] = [];
+  let e: RegExpExecArray | null;
+  EXPORT_NAME_RE.lastIndex = 0;
+  while ((e = EXPORT_NAME_RE.exec(source))) {
+    if (!serverFnNames.has(e[1])) offenders.push(e[1]);
+  }
+  const hasDefault = /\bexport\s+default\b/.test(source);
+  const hasExportList = /\bexport\s*\{/.test(source);
+  const hasStarReexport = /\bexport\s*\*/.test(source);
+  if (offenders.length || hasDefault || hasExportList || hasStarReexport) {
+    const extras = [
+      ...new Set(offenders),
+      ...(hasDefault ? ["default"] : []),
+      ...(hasExportList ? ["{ … } re-export list"] : []),
+      ...(hasStarReexport ? ["* re-export"] : []),
+    ];
+    return {
+      ok: false,
+      error:
+        `${path} defines serverFn(s) [${[...serverFnNames].join(", ")}] but ALSO ` +
+        `exports non-serverFn value(s): ${extras.join(", ")}. A serverFn module's ` +
+        `browser build is SYNTHESIZED entirely from its serverFn exports, so any ` +
+        `other value export would be DROPPED from the client build (and its source ` +
+        `is deliberately never shipped to the browser). Move the serverFn(s) into ` +
+        `their own module (e.g. functions/${path.split("/").pop()}) that exports ` +
+        `ONLY serverFns (and \`import type\` types), and import your component/` +
+        `helper from elsewhere. This keeps handler source (secrets, gql, logic) off ` +
+        `the client.`,
+    };
+  }
+
+  return { ok: true, clientCompiled: synthesizeClientStub(path, fns) };
+}
 
 /**
  * Give every exported serverFn a stable id ("<path>#<exportName>") that is

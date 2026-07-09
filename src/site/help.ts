@@ -86,8 +86,17 @@ response is \`405 Method Not Allowed\`. Action return values are normalized:
 
 A \`serverFn\` is a typed, validated server function. It is the recommended way to
 do mutations and typed reads — reach for a raw route \`action\` only when you need a
-full \`Response\` (redirects, non-JSON, webhooks). Define it in its own module and
-import it from BOTH a loader (server) and an island (browser):
+full \`Response\` (redirects, non-JSON, webhooks).
+
+CONVENTION (enforced at write): a serverFn module exports ONLY serverFns (and
+\`import type\` types). The browser build of a serverFn module is SYNTHESIZED
+entirely from its serverFn exports — the handler/validator source is never sent
+to the client — so any OTHER value export (a component, a plain function,
+\`export default\`, an \`export { … }\` list) would be dropped from the client build
+and is REJECTED by \`site_write\` with a message telling you to move the serverFn(s)
+into their own module. Keep serverFns in a dedicated module (e.g. under
+\`functions/\`) and put components/helpers elsewhere. Define it there and import it
+from BOTH a loader (server) and an island (browser):
 
     // functions/guestbook.ts
     import { serverFn } from "loki/runtime";
@@ -105,7 +114,7 @@ import it from BOTH a loader (server) and an island (browser):
         return { id: created.id };
       });
 
-    export const recentEntries = serverFn() // method defaults to GET (a read)
+    export const recentEntries = serverFn() // called from a loader (in-isolate); method n/a
       .handler(async ({ env }): Promise<GuestbookEntryRecord[]> => {
         const data = await query(env, ENTRIES);
         return data.allGuestbookEntries;
@@ -119,7 +128,34 @@ import it from BOTH a loader (server) and an island (browser):
   \`env.RECORDS\`, \`env.REALTIME\`. There is NO raw DB, NO loader, NO outbound fetch.
   The return value is JSON-serialized to callers; annotate it (e.g. via
   \`import type { X } from "loki/schema"\`) so its type flows to the caller.
-- \`method\`: \`"GET"\` (default, for reads) or \`"POST"\` (mutations).
+- \`method\`: \`"GET"\` or \`"POST"\` (POST is the default for the browser stub). It ONLY
+  affects the browser-RPC TRANSPORT: a GET stub encodes the input as
+  \`?data=<urlencoded JSON>\` (watch URL length — use POST for large/complex input);
+  a POST stub sends \`{ data }\` in the request body. When a serverFn is called
+  DIRECTLY from a loader it is an in-isolate call and \`method\` is irrelevant (no
+  HTTP happens). Use GET for cache-friendly reads, POST for mutations.
+
+### serverFn id + RPC endpoint (curl-testing)
+
+Every serverFn has a stable id of the form \`<modulePath>#<exportName>\` (e.g.
+\`functions/guestbook.ts#createEntry\`) — derived from where it's defined, identical
+in the isolate and the browser stub, so warm isolates cache across publishes of
+unchanged code. The browser stub calls:
+
+    <method> /__fn/<scope>/<encodeURIComponent(id)>
+
+where \`scope\` is \`draft\` in preview (requires the \`loki_preview\` cookie) or
+\`v<N>\` on the published site (this is exactly \`window.__lokiFnBase\`, injected into
+the page alongside the island bootstrap). So to curl-test a POST serverFn in
+preview (reusing the cookie jar from \`preview_site\`):
+
+    curl -sb jar -X POST "<origin>/__fn/draft/functions%2Fguestbook.ts%23createEntry" \\
+      -H 'content-type: application/json' \\
+      -d '{"data":{"name":"Ada","message":"hi"}}'
+
+A GET serverFn instead: \`curl -sb jar "<origin>/__fn/draft/<id>?data=%7B%7D"\`.
+Responses: \`200\` with the JSON result, \`400\` on a validator throw / bad input,
+\`404\` unknown id, \`500\` on a handler throw (logged server-side, generic message).
 
 ### Two ways to call the SAME imported function
 
@@ -156,6 +192,18 @@ cannot reach D1, the Worker Loader, or the network directly, and \`env.RECORDS\`
 rejects any model not in your allowlist exactly as it does from a loader. Writing
 a serverFn does NOT escalate privileges beyond what your page code already has.
 
+Your handler and validator SOURCE does NOT ship to the browser. The browser build
+of a serverFn module is a synthesized stub — for each serverFn just
+\`export const NAME = __lokiClientServerFn("<id>","<method>")\`, no handler body, no
+validator, no \`gql\` strings, no logic. So the RPC boundary is real: the client can
+only INVOKE the serverFn over \`/__fn/...\` and receive its JSON result; it cannot
+read what the handler does. The capability boundary is \`env\` — what you can reach
+through \`env.GRAPHQL\`/\`env.RECORDS\`/\`env.REALTIME\` is all a handler can do.
+Nevertheless, secrets belong in bindings/\`env\`, NEVER hardcoded in a module that
+client code imports: only serverFn modules are stubbed, so a secret placed in a
+component or shared util (which IS served verbatim to the browser for hydration)
+would leak. Keep secrets in \`env\`.
+
 ## Scoped record writes: env.RECORDS.create
 
 Route actions (and loaders) can create CMS records via \`env.RECORDS\`, but ONLY
@@ -178,6 +226,18 @@ the publish fails. The published tree's allowlist is snapshotted with the versio
 RECORDS exposes ONLY \`create\` (no update/delete/query). There is NO rate limiting
 in v1: a public write route MUST validate inputs itself and rely on model field
 validators (length caps, required, format) to reject junk.
+
+CASING TRAP (important): \`env.RECORDS.create(model, fields)\` takes **snake_case**
+field api_keys — the CMS write API — while GraphQL READS expose the SAME fields in
+**camelCase**. So within ONE file you routinely write \`postSlug\` in a \`gql\` query
+and \`post_slug\` in the \`create\` call for the same field:
+
+    await env.RECORDS.create("comment", { post_slug: slug, author_name: name });
+    // …but the query that reads them back uses camelCase:
+    gql\`query { allComments { postSlug authorName } }\`
+
+If a create silently ignores a field or errors on an unknown one, check the case:
+create = snake_case, GraphQL = camelCase.
 
 ## Realtime: env.REALTIME.publish (server) + connectChannel (client)
 

@@ -19,7 +19,7 @@ import {
   writeFile,
   type AssetManifest,
 } from "./store";
-import { transpileModule } from "./transpile";
+import { transpileModule, buildClientBuild } from "./transpile";
 import { buildDraftBundle } from "./serve";
 import {
   extractDocsFromFile,
@@ -157,8 +157,24 @@ export const SITE_TOOLS: SiteTool[] = [
       if (!result.ok) {
         return errorResult(`Transpile failed for ${path}:\n${result.error}`);
       }
-      await writeFile(env, path, source, result.code ?? null);
-      const base = `Wrote ${path} (${source.length} bytes${result.code ? ", transpiled" : ""}).`;
+      // Synthesize the browser stub for serverFn modules (and enforce the
+      // "serverFn modules export only serverFns" convention). REJECT the write
+      // on a collision so handler source can never leak to the client.
+      const clientBuild = buildClientBuild(path, source);
+      if (!clientBuild.ok) {
+        return errorResult(`Write rejected for ${path}:\n${clientBuild.error}`);
+      }
+      await writeFile(
+        env,
+        path,
+        source,
+        result.code ?? null,
+        clientBuild.clientCompiled ?? null,
+      );
+      const stubNote = clientBuild.clientCompiled
+        ? ", serverFn module (browser gets a stub build)"
+        : "";
+      const base = `Wrote ${path} (${source.length} bytes${result.code ? ", transpiled" : ""}${stubNote}).`;
 
       // Write-time gql validation: extract this file's documents and validate
       // them against the live schema so field/type mistakes surface NOW, not at

@@ -16,6 +16,7 @@ import {
 import type { Env } from "../env";
 import { getCms } from "../env";
 import { buildDraftBundle, smokeRender } from "./serve";
+import { buildClientBuild } from "./transpile";
 import {
   buildDraftAssetManifest,
   insertVersion,
@@ -349,6 +350,19 @@ export async function publishSite(
     };
   }
 
+  // (d2) synthesize the browser stub bundle for serverFn modules. Recomputed
+  // from source (not just read from client_compiled) so it also catches any
+  // collision in a file written before client stubs existed — a serverFn module
+  // that leaks non-serverFn exports must not publish.
+  const clientBundle: Record<string, string> = {};
+  for (const f of await listFiles(env)) {
+    const built = buildClientBuild(f.path, f.source);
+    if (!built.ok) {
+      return { ok: false, stage: "client-build", error: built.error! };
+    }
+    if (built.clientCompiled != null) clientBundle[f.path] = built.clientCompiled;
+  }
+
   // (e) snapshot the draft asset manifest (blobs already live in R2, so this is
   // just a path->{hash,contentType,size} map; publish/rollback swap manifests).
   const assetManifest = await buildDraftAssetManifest(env);
@@ -364,6 +378,7 @@ export async function publishSite(
     bundle,
     footprint,
     assetManifest,
+    clientBundle,
   );
   await setState(env, "published_version", String(versionId));
 
