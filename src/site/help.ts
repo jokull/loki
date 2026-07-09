@@ -129,11 +129,45 @@ Push live updates to connected browsers over WebSockets.
   \`Island\` (the client-hydration helper — see "Islands" below), and
   \`connectChannel(name, onMessage)\` (client-only realtime subscription — see
   "Realtime" below).
+- \`loki/schema\` (TYPE IMPORTS ONLY) -> content types generated from the live
+  schema: \`import type { BlogPostRecord, Query } from "loki/schema"\`. See "Typed
+  content" below; read the exact shapes with the \`schema_types\` tool.
 - Relative imports between your own files must include the extension, e.g.
   \`import { Layout } from "./components/layout.tsx"\`.
 
 Do NOT rely on network access, \`process\`, or Node built-ins — the site runs in an
 isolated worker with no outbound fetch except the GraphQL binding.
+
+## Typed content (schema_types + loki/schema)
+
+Your content has a real, live-generated TypeScript type for every model. Use it —
+you have no IDE hover, so reading the types is how you know the exact field names
+and shapes you're coding against.
+
+1. Run the \`schema_types\` MCP tool FIRST. It returns TypeScript generated from the
+   LIVE schema: one interface per record type (e.g. \`BlogPostRecord\`,
+   \`GuestbookEntryRecord\`), the \`Query\` root (\`allBlogPosts\` / \`blogPost\` /
+   \`_allBlogPostsMeta\` return shapes, each field's args in a JSDoc comment), the
+   \`*OrderBy\` and \`ItemStatus\` enums, and the filter input types. Nullability
+   (\`| null\`), lists (\`T[]\`), nested linked records, and Structured Text
+   (\`{ value, blocks, inlineBlocks, links }\`) are all rendered faithfully.
+2. Annotate loaders and props with \`import type\` from \`loki/schema\` — the SAME
+   types:
+
+       import type { BlogPostRecord, Query } from "loki/schema";
+       export async function loader({ env }): Promise<{ posts: BlogPostRecord[] }> { … }
+       export default function Home({ posts }: { posts: BlogPostRecord[] }) { … }
+
+   \`loki/schema\` is TYPES-ONLY: \`import type\` (and any import used only in type
+   positions) is erased at transpile, so it adds NO runtime import. Using one of
+   its names as a runtime VALUE fails the write with a clear message — keep it to
+   \`import type\`.
+3. Every \`gql\`\`...\`\`\` document is validated against the live schema at WRITE time:
+   \`site_write\` returns a \`graphqlErrors\` block (precise messages, e.g.
+   \`Cannot query field "x" on type "BlogPostRecord". Did you mean "y"?\`) the moment
+   you save. Those errors are NON-FATAL (the file is still written, so you can
+   scaffold a component before its query is done) — but \`publish_site\` HARD-GATES
+   on the same validation, so fix them before publishing.
 
 ## Example: routes/posts/[slug].tsx
 
@@ -144,6 +178,7 @@ with \`renderStructuredText\`. (Explore the exact fields first with the
 \`graphql_query\` MCP tool — introspection is allowed.)
 
     import { gql, query, renderStructuredText } from "loki/runtime";
+    import type { BlogPostRecord } from "loki/schema";
 
     const POST = gql\`
       query Post($slug: String!) {
@@ -156,14 +191,16 @@ with \`renderStructuredText\`. (Explore the exact fields first with the
       }
     \`;
 
-    export async function loader({ env, params }) {
+    // Type the loader's return so props are checked against the real schema.
+    export async function loader({ env, params }): Promise<{ post: BlogPostRecord | null }> {
       const data = await query(env, POST, { slug: params.slug });
       return { post: data.blogPost };
     }
 
-    export const head = (props) => ({ title: props.post?.title ?? "Post" });
+    export const head = (props: { post: BlogPostRecord | null }) =>
+      ({ title: props.post?.title ?? "Post" });
 
-    export default function Post({ post }) {
+    export default function Post({ post }: { post: BlogPostRecord | null }) {
       if (!post) return <main><h1>Not found</h1></main>;
       return (
         <main class="post">
@@ -172,6 +209,10 @@ with \`renderStructuredText\`. (Explore the exact fields first with the
         </main>
       );
     }
+
+    // \`BlogPostRecord\` (and Query, filter/orderBy types) come from the live schema —
+    // run \`schema_types\` to read the exact fields. \`import type\` is erased at
+    // transpile, so it adds no runtime import.
 
 ## Islands (client-side interactivity)
 
@@ -406,7 +447,8 @@ Then \`publish_site\` — it snapshots the asset manifest into the version and w
 
 ## Workflow
 
-1. site_write("routes/index.tsx", "...")   (transpiled immediately; errors returned)
+0. schema_types()                          -> read the content types before querying
+1. site_write("routes/index.tsx", "...")   (transpiled + gql validated; errors returned)
 2. preview_site()                          -> open the returned URL to see the DRAFT
 3. publish_site("message")                 -> validates + smoke-renders + snapshots
 4. rollback_site(versionId) / site_versions() as needed

@@ -21,7 +21,12 @@ import {
 } from "./store";
 import { transpileModule } from "./transpile";
 import { buildDraftBundle } from "./serve";
-import { publishSite } from "./publish";
+import {
+  extractDocsFromFile,
+  publishSite,
+  validateDocuments,
+} from "./publish";
+import { getSchemaBundle } from "./schema-types";
 import { SITE_HELP } from "./help";
 import type { Bundle } from "./bundle";
 import {
@@ -118,9 +123,31 @@ export const SITE_TOOLS: SiteTool[] = [
     },
   },
   {
+    name: "schema_types",
+    description:
+      "Return TypeScript types generated from the LIVE CMS GraphQL schema — the " +
+      "source of truth for content field names and types. READ THIS BEFORE writing " +
+      "route queries, loaders, or component props: an agent has no IDE hover, so " +
+      "reading these types is how you learn the exact shapes you are coding against. " +
+      "It declares one interface per record type (e.g. BlogPostRecord), the Query root " +
+      "(allBlogPosts / blogPost / _allBlogPostsMeta return shapes, with each field's " +
+      "args in a JSDoc comment), the orderBy/status enums, and the filter input types. " +
+      "Nullability (`| null`), lists (`T[]`), nested linked records, and Structured Text " +
+      "(`{ value, blocks, inlineBlocks, links }`) are rendered faithfully. These are the " +
+      "SAME types importable as `import type { BlogPostRecord, Query } from \"loki/schema\"` " +
+      "to annotate loaders and props. Regenerates automatically when the schema changes.",
+    inputSchema: {},
+    async handler(_args, { env }) {
+      const { ts, version } = await getSchemaBundle(env);
+      return text(`// schema_version: ${version}\n${ts}`);
+    },
+  },
+  {
     name: "site_write",
     description:
-      "Create or overwrite a site file in the draft tree. TSX/TS/JSX/JS are transpiled immediately (sucrase, preact JSX); transpile errors are returned and the write is rejected. Other files (styles.css, *.graphql) are stored as-is.",
+      "Create or overwrite a site file in the draft tree. TSX/TS/JSX/JS are transpiled immediately (sucrase, preact JSX); transpile errors are returned and the write is REJECTED. Other files (styles.css, *.graphql) are stored as-is. " +
+      "After a successful write, every gql`...` document in the file (and standalone *.graphql files) is VALIDATED against the live CMS schema; any problems come back in a `graphqlErrors` block (with precise messages like `Cannot query field \"x\" on type \"BlogPostRecord\". Did you mean \"y\"?`). These are NON-FATAL — the file is still saved so you can write a component before its query is finished — but fix them before publish_site, which hard-gates on the same validation. " +
+      "For typed authoring, read the `schema_types` tool output and `import type { BlogPostRecord } from \"loki/schema\"`.",
     inputSchema: {
       path: z.string().describe("Repo-relative path, e.g. routes/index.tsx or styles.css"),
       source: z.string().describe("Full file contents"),
@@ -131,8 +158,35 @@ export const SITE_TOOLS: SiteTool[] = [
         return errorResult(`Transpile failed for ${path}:\n${result.error}`);
       }
       await writeFile(env, path, source, result.code ?? null);
+      const base = `Wrote ${path} (${source.length} bytes${result.code ? ", transpiled" : ""}).`;
+
+      // Write-time gql validation: extract this file's documents and validate
+      // them against the live schema so field/type mistakes surface NOW, not at
+      // publish. Non-fatal — the write already succeeded. Never let a schema
+      // read failure block the write.
+      const docs = extractDocsFromFile(path, source);
+      if (docs.length === 0) return text(base);
+      let problems;
+      try {
+        const { schema } = await getSchemaBundle(env);
+        problems = validateDocuments(schema, docs);
+      } catch (err) {
+        return text(
+          `${base}\n\n(Skipped gql validation — could not read the live schema: ` +
+            `${err instanceof Error ? err.message : String(err)})`,
+        );
+      }
+      if (problems.length === 0) {
+        return text(
+          `${base}\nValidated ${docs.length} GraphQL document(s) against the live schema — no errors.`,
+        );
+      }
+      const detail = problems
+        .map((p) => `  ${p.source}:\n    - ${p.errors.join("\n    - ")}`)
+        .join("\n");
       return text(
-        `Wrote ${path} (${source.length} bytes${result.code ? ", transpiled" : ""}).`,
+        `${base}\n\ngraphqlErrors (NON-FATAL — file saved; fix before publish_site):\n${detail}\n\n` +
+          `Tip: read \`schema_types\` for exact field names/types, or prototype with graphql_query.`,
       );
     },
   },

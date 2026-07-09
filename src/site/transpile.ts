@@ -48,12 +48,32 @@ export function transpileModule(path: string, source: string): TranspileResult {
       production: true,
     });
     const rewritten = rewriteSpecifiers(result.code);
+    // `loki/schema` is a TYPES-ONLY module — `import type { … }` (and imports
+    // used only in type positions) are erased by sucrase and leave no runtime
+    // specifier. If one survives transpile the author used a binding as a VALUE,
+    // which cannot resolve at load time (there is no runtime loki/schema module).
+    if (SCHEMA_SPECIFIER_RE.test(rewritten)) {
+      return {
+        ok: false,
+        error:
+          'loki/schema is types-only — it has no runtime module. Use a type-only ' +
+          'import: `import type { BlogPostRecord } from "loki/schema"`. It exposes ' +
+          "content types (record interfaces, the Query root, filter/orderBy) for " +
+          "annotating loaders and props; read the exact shapes with the " +
+          "schema_types tool. Do not use its names as runtime values.",
+      };
+    }
     return { ok: true, code: rewritten };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return { ok: false, error: message };
   }
 }
+
+// Matches a surviving `loki/schema` module specifier in `from "…"` /
+// `import(…)` position (a genuine value import — type-only imports are erased).
+const SCHEMA_SPECIFIER_RE =
+  /(\bfrom\s*|\bimport\s*\(\s*)(["'])loki\/schema\2/;
 
 /**
  * Sucrase's automatic runtime emits `import { jsx } from "preact/jsx-runtime"`.
