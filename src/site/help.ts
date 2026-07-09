@@ -896,6 +896,32 @@ Then \`publish_site\` — it snapshots the asset manifest into the version and w
   expand (add new field) -> backfill content -> publish the site using it ->
   contract (remove the old field).
 
+## Localized content (i18n)
+
+Content is localized out of the box (DatoCMS-style). Every collection/record field
+and every localized content field takes a \`locale: SiteLocale\` argument (plus
+\`fallbackLocales: [SiteLocale!]\`), and each record exposes \`_locales\`. So you don't
+need any special setup — just pass the locale in your query:
+
+    const POST = gql\`
+      query Post($slug: String!, $locale: SiteLocale) {
+        blogPost(filter: { slug: { eq: $slug } }, locale: $locale, fallbackLocales: [en]) {
+          title
+          body { value }
+        }
+      }
+    \`;
+    export async function loader({ env, params }) {
+      const data = await query(env, POST, { slug: params.slug, locale: params.lang });
+      return { post: data.blogPost };
+    }
+
+Drive it from the URL with a language route param — \`routes/[lang]/posts/[slug].tsx\`
+maps to \`/:lang/posts/:slug\`, so \`params.lang\` is the locale. \`SiteLocale\` is an
+enum; introspect it (\`graphql_query\` with \`{ __type(name:"SiteLocale"){ enumValues{ name } } }\`)
+or read \`schema_types\` to see which locales exist. Per-field all-locale values are
+available as \`_allXLocales\`. Manage locales/translations with the content (editor) tools.
+
 ## Shell (edit the working tree like a repo folder)
 
 The \`shell\` tool gives you a real in-process bash over the site's WORKING TREE —
