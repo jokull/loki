@@ -1,158 +1,89 @@
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.svg">
-  <img src="assets/logo.svg" alt="Loki" width="330">
-</picture>
+# Loftur
 
-**Loki lets an AI agent run an entire website at runtime — content schema, content, code, routes, and design — through a single MCP endpoint.** No repo to clone, no build pipeline, no deploy step. The agent writes TSX, previews it at a real URL, and publishes by repointing a version. Rollback is instant. A failed publish never touches the live site.
+**Vibe-code a real site. Schema and all.**
 
-Loki is a single Cloudflare Worker built on [agent-cms](https://github.com/jokull/agent-cms) (agent-first headless CMS: D1, GraphQL, MCP) and [Dynamic Workers](https://developers.cloudflare.com/workers/runtime-apis/bindings/worker-loader/) (the Worker Loader API, open beta). Site code lives in the database, compiles at write time, and executes in sandboxed V8 isolates loaded on demand.
+Most AI builders one-shot a good-looking page. Loftur one-shots the whole thing over MCP: a **real content schema** (models, fields, a typed GraphQL + schema API — feature-compatible with DatoCMS, minus the CRUD-UI), a **per-site database**, routes, islands, and server functions. Then the owner hands **editors** a scoped MCP token to maintain content and upload images — no schema changes, no code, no dashboard to babysit.
 
-## Why
+Loftur is a multi-tenant, agent-native site platform on Cloudflare, built on [agent-cms](https://github.com/jokull/agent-cms) (agent-first headless CMS) and [Dynamic Workers](https://developers.cloudflare.com/workers/runtime-apis/bindings/worker-loader/) (the Worker Loader API). Each site is its own isolated backend. Site code lives in the database, transpiles at write time, and runs in sandboxed V8 isolates loaded on demand — no repo, no bundler, no deploy step.
 
-Agents are already good at building websites. What slows them down is the ceremony around the code: branches, pull requests, CI, deploys — a loop designed for humans coordinating with humans. agent-cms moved *schema and content* into the runtime loop; Loki moves the rest of the site there too. "Deploy" collapses into a database write, and the whole edit → preview → publish cycle happens inside one conversation.
+## How it works
 
-The safety you lose by skipping CI is re-created where an agent can actually use it:
+1. **Sign up** at [loftur.app](https://loftur.app) and claim `{sub}.loftur.app`. You get a one-time **owner API key** and a ready-to-paste MCP server config.
+2. **Point an AI agent** (Claude Code or any MCP client) at `{sub}.loftur.app/mcp` with `Authorization: Bearer <key>`. The MCP endpoint also answers at `loftur.app/mcp` — it resolves your site from the key alone, so you can connect before the wildcard DNS resolves your subdomain.
+3. **The agent orients itself** by calling `site_help`, then designs a content schema, a per-site feature database, routes, islands, and server functions — checking work with `preview_site` and shipping with `publish_site`.
+4. **The site serves** at `{sub}.loftur.app`. Rollback is instant; a failed publish never touches the live site.
 
-- **Publish-time validation** — every GraphQL query in the site is validated against the live schema; a smoke render runs in a throwaway sandbox. Errors come back precise (`routes/index.tsx#gql0: Cannot query field "subtitle" on type "BlogPostRecord". Did you mean "title"?`) and the live site stays untouched.
-- **Immutable versions** — publishing snapshots the compiled site; `rollback_site` repoints a pointer.
-- **A migration guard** — Loki records which schema fields each published version queries (its *footprint*). Destructive schema operations that would break the live site are rejected with an error that teaches the expand → backfill → publish → contract order.
+In blind tests, agents given nothing but the endpoint URL and a key discovered the tooling through `site_help` and shipped persistent apps — a guestbook and a poll — first try.
+
+## What the agent can build
+
+Every site gets the full toolset over one merged `/mcp` endpoint (Loftur's own site tools plus every agent-cms tool, proxied in-process). Grouped:
+
+**Content schema & data (agent-cms).** Content models, fields, records, publishing, assets, and search over a typed GraphQL + schema API — DatoCMS-style (`allBlogPosts`, `blogPost(filter: …)`, `BlogPostRecord`, Structured Text as `{ value, blocks, inlineBlocks, links }`). `graphql_query` explores the API (introspection included); `schema_types` returns live-generated TypeScript for every model.
+
+**A per-site feature database.** For app state that isn't content (guestbooks, polls, orders), the agent designs relational tables at runtime with `feature_migrate` (named, idempotent, versioned migrations), inspects them with `feature_schema` / `feature_query`, and queries them from server code with Drizzle over `env.FEATURES_SQL` (`drizzle-orm/sqlite-proxy` + a `featuresDriver(env)` helper).
+
+**Routes, islands & server functions (no bundler).** File-based routing under `routes/`; SSR Preact by default. Any component becomes a hydrated **Preact island** (`<Island client="load|idle|visible">`) served with native ES modules and import maps — no client bundle. Typed, validated **`serverFn`** server functions run in the sandboxed isolate, callable in-process from a loader and over RPC from an island. `env.RECORDS.create` does scoped record writes (gated by `loki.config.json` `writableModels`); `env.REALTIME.publish` fans out to WebSocket channels backed by a Durable Object.
+
+**Static & design assets.** `site_asset_import` (by URL) and `site_asset_write` (base64) store files under `public/`, content-addressed in R2, served with ETag/304 and version-pinned.
+
+**npm dependencies — no install, no build.** The agent can `import` any npm package. On `site_write`, Loftur resolves it via esm.sh, crawls and rewrites the module graph, snapshots a self-contained, version-pinned copy into R2, then **test-loads that snapshot in a throwaway workerd isolate** to confirm it actually links and runs here. Support is empirical, not an allowlist: the write reports `resolvedDeps` with a `loadable` flag and rejects anything that needs a Node builtin or won't load. Server-only deps (inside a `serverFn` module) never reach the browser.
+
+**Byte-faithful versioning + an in-Worker shell.** `preview_site` mints a 30-minute token that serves the draft at the real domain behind an HttpOnly cookie. `publish_site` validates every GraphQL document against the live schema, extracts the migration footprint, smoke-renders, and snapshots the authored **source** (plus compiled bundle and asset manifest) into an immutable version. `rollback_site` / `site_versions` / `reset_site` restore a version's exact source byte-for-byte. `shell` is a real in-process bash over the draft tree (`grep`/`sed`/`awk`/`find`/pipes) whose writes route through the same transpile + validate + dep-resolve pipeline as `site_write`.
+
+**Migration guard.** Each published version records the set of GraphQL `Type.field` pairs it queries (its *footprint*). A destructive schema op that would break a live site is rejected with an error that teaches the expand → backfill → publish → contract order — over MCP and over the REST API (409). The safety CI would have given you, re-created where an agent can use it.
+
+## Owner vs editor
+
+Two roles, resolved from the bearer token:
+
+- **Owner key** — full access: schema, content, and code. This is the one-time key issued at signup.
+- **Editor token** — content only. The owner mints one with `create_editor_token`; an editor points their own MCP client at it to create/update/delete records, publish, and upload images. It **cannot** touch the schema (models/fields) or the site's code. Manage with `list_editor_tokens` / `revoke_editor_token`.
+
+The toolset is gated by an allowlist, so new tools default to owner-only.
 
 ## Architecture
 
-```mermaid
-flowchart LR
-    A[Your agent] -- MCP --> M["/mcp (merged endpoint)"]
-    subgraph W [Loki · one Cloudflare Worker]
-        M -- site tools --> S[(D1: site files,\nversions, footprints)]
-        M -- CMS tools, guarded --> C[agent-cms\nschema · content · GraphQL]
-        S --> L[Worker Loader]
-        L -- loopback GraphQL --> C
-    end
-    V[Visitors] --> L
-```
+A single supervisor Worker (deployed as `loki`) serves the apex control plane, the merged `/mcp` endpoint, and every tenant site.
 
-- **Merged MCP endpoint.** Loki exposes one `/mcp`: its own site tools plus every agent-cms tool, proxied in-process. Destructive schema calls pass through the migration guard first.
-- **Site ring.** Source files (TSX/TS/CSS) are stored in D1 and transpiled on write (sucrase). Publishing snapshots a compiled module map into a version row.
-- **Serving.** Public traffic loads the published version into a V8 isolate via `LOADER.get("site:v<N>")` — milliseconds on cold start, cached while warm. The isolate gets exactly two capabilities: a loopback GraphQL binding into the CMS and nothing else (`globalOutbound: null`).
-- **Preview.** `preview_site` mints a 30-minute token; the draft tree serves at the real domain behind an HttpOnly cookie, with draft content included in queries.
+- **Per-tenant isolation.** Each site is its own backend in Durable Object SQLite, addressed by `idFromName(siteId)`:
+  - `TenantDB` holds the site's **content** and runs the agent-cms engine *inside* the DO, against the DO's embedded SQLite (via `SqlStorageD1`, a ~50-line `D1Database` adapter over `ctx.storage.sql` — agent-cms runs unmodified).
+  - `TenantFeatureDB` holds the site's **feature data**, separate so app table names can't collide with agent-cms's reserved tables.
 
-## The authoring model
+  Name-addressing means no per-tenant binding ceiling (D1 static bindings cap out; DO namespaces scale to millions), idle cost ≈ $0 (hibernated DO = no compute billing), and **30-day point-in-time recovery per tenant** for free.
 
-The agent writes Preact routes with file-based routing:
+- **Worker Loader isolates.** A tenant's published version loads into a V8 isolate via the Worker Loader (`LOADER`) — milliseconds cold, cached warm, `globalOutbound: null`. The isolate is handed its capabilities as `WorkerEntrypoint` service-binding stubs: `GRAPHQL` (loopback into that tenant's CMS), `RECORDS`, `REALTIME`, and `FEATURES_SQL`. This is not a convenience — a raw D1/DO handle **cannot** cross the loader's structured-clone boundary (`DataCloneError`); only entrypoint stubs pass. So the per-tenant DO SQLite is always reached through a capability stub, and the sandbox has exactly the surface a loader has and nothing more.
 
-```tsx
-// routes/posts/[slug].tsx
-import { gql, query, renderStructuredText } from "loki/runtime";
+- **Request routing.** `loftur.app` / `www` → the control plane (signup, keys) and `/mcp`. `{sub}.loftur.app` → the tenant site (published version, or the draft under a preview cookie) and `/mcp`. A `x-loftur-host` header overrides the host for pre-DNS testing.
 
-const POST = gql`
-  query Post($slug: String!) {
-    blogPost(filter: { slug: { eq: $slug } }) {
-      title
-      body { value }
-    }
-  }
-`;
+## Local development
 
-export async function loader({ env, params }) {
-  const data = await query(env, POST, { slug: params.slug });
-  return { post: data.blogPost };
-}
-
-export const head = (props) => ({ title: props.post?.title ?? "Post" });
-
-export default function Post({ post }) {
-  return (
-    <article>
-      <h1>{post.title}</h1>
-      {renderStructuredText(post.body?.value)}
-    </article>
-  );
-}
-```
-
-`routes/index.tsx` → `/`, `routes/posts/[slug].tsx` → `/posts/:slug`, `styles.css` → linked stylesheet. A `main.ts` default-exporting a fetch handler is the escape hatch from file routing. The full guide lives in the `site_help` tool — the endpoint documents itself.
-
-## Tools
-
-On top of the full agent-cms toolset (models, fields, records, publishing, assets, search), Loki adds:
-
-| Tool | What it does |
-| --- | --- |
-| `site_write` / `site_read` / `site_list` / `site_delete` | Edit the draft tree; writes transpile immediately and reject on error |
-| `site_asset_import` / `site_asset_write` | Add design images and one-off files (favicon, OG image, hero, downloads) by URL or bytes; returns the exact URL to paste |
-| `site_diff` | Draft vs. published: added / changed / removed, code and assets |
-| `graphql_query` | Explore the content API (introspection included) before writing route queries |
-| `preview_site` | Token URL serving the draft at the real domain |
-| `publish_site` | Validate queries → extract footprint → smoke render → snapshot → go live |
-| `site_versions` / `rollback_site` | List immutable versions; repoint the live pointer |
-| `site_help` | The authoring guide, served by the endpoint itself |
-
-Beyond static pages, routes can export typed **`serverFn`** server functions (validated, sandboxed, callable from loaders and from islands over RPC), write to allowlisted content models (`env.RECORDS`), and push to WebSocket channels (`env.REALTIME`) — and any component can become a hydrated **Preact island** for client-side interactivity, served with no bundler via native ES modules and import maps. A live realtime guestbook, per-post reactions, forms, and design assets all run this way today.
-
-**npm dependencies, no install or build step.** An agent can `import` a workerd-compatible ESM package and Loki resolves it via esm.sh at write time — snapshotted self-contained, content-addressed, version-pinned into the published version — with no `npm install`, no `node_modules`, and no bundler config. `site_write` reports exactly what was pinned (`resolvedDeps` with a `loadable` compatibility flag). Server-only dependencies never reach the browser.
-
-**A feature database via Drizzle.** For custom features that need their own relational state, agents query a dedicated D1 with Drizzle (`drizzle-orm/sqlite-proxy` + a `featuresDriver(env)` helper). Raw database access never enters the sandbox — it's mediated by an RPC entrypoint, because the platform *enforces* it: raw bindings can't cross the Worker Loader boundary, only capability stubs can. A live newsletter signup runs on this today. Feature-table schema is managed out-of-band (your own drizzle-kit/atlas), so Loki provides query access, not migrations.
-
-## Quickstart
-
-You need a Cloudflare account on Workers Paid (for Worker Loader, open beta), `pnpm`, and `wrangler` logged in.
+Requires a Cloudflare account on Workers Paid (Worker Loader), `pnpm`, and `wrangler` logged in.
 
 ```sh
-git clone https://github.com/jokull/loki && cd loki
-pnpm install && pnpm vendor
+pnpm install
+pnpm vendor                              # builds the site runtime shim (scripts/build-vendor.mjs)
 
-wrangler d1 create loki-cms        # put the new database_id in wrangler.jsonc
-wrangler d1 migrations apply loki-cms --remote
-wrangler secret put WRITE_KEY      # any long random string
-wrangler deploy
+wrangler d1 create loftur-db             # put the database_id into wrangler.jsonc (binding DB)
+wrangler d1 migrations apply loftur-db   # applies migrations/ (add --remote for prod)
+wrangler secret put WRITE_KEY            # any long random string (admin/default-site key)
+
+pnpm dev                                 # wrangler dev
+pnpm deploy                              # wrangler deploy
 ```
 
-Connect your agent (Claude Code shown; any MCP client works):
+`pnpm typecheck` runs `tsc --noEmit`; `pnpm types` regenerates `worker-configuration.d.ts` via `wrangler types` (never edit it by hand). The Worker binds `DB` (D1 `loftur-db`), `FEATURES_DB`, `LOADER` (Worker Loader), `ASSETS` (R2), and the `ChannelDO` / `TenantDB` / `TenantFeatureDB` Durable Objects — see `wrangler.jsonc`.
 
-```sh
-claude mcp add loki https://loki.<your-subdomain>.workers.dev/mcp \
-  --transport http --header "Authorization: Bearer <WRITE_KEY>"
-```
+See [`DECISIONS.md`](./DECISIONS.md) for the no-bundler architecture rationale (ADR-001) and the autonomous-run risk notes (ADR-002).
 
-Then ask for a website:
+## Status
 
-> Read site_help. Create a blog with a few posts about anything, design it nicely, preview it, and publish.
+Live at [loftur.app](https://loftur.app): signup → keyed MCP → build, with a fully isolated content + feature backend per site. The apex, control plane, and `loftur.app/mcp` are in production; public serving at each `{sub}.loftur.app` needs the proxied wildcard `*.loftur.app` DNS record (serving is otherwise proven via the `x-loftur-host` override).
 
-In the first end-to-end test, an agent given nothing but the endpoint URL and the key did exactly that — schema, content, routes, stylesheet, dark mode — and shipped it, self-correcting from the validation errors along the way.
-
-## The migration guard
-
-The part CI can't do for you. Each published version stores the set of GraphQL types and fields it queries. When the agent later tries `delete_field` on something the live site depends on:
-
-```
-Blocked by Loki migration guard: The published site (version v5) still queries
-field "slug" (GraphQL BlogPostRecord.slug) on model "blog_post".
-Follow the expand -> contract migration order:
-  1. EXPAND: add the replacement field
-  2. BACKFILL: migrate content
-  3. UPDATE SITE CODE: publish a site version that no longer queries it
-  4. CONTRACT: retry this operation
-```
-
-The same check covers the REST API (409). Non-breaking updates (labels, validators, hints) pass through untouched.
-
-## Status & roadmap
-
-This is a working experiment, not a product. Rough edges are documented by the tools themselves.
-
-Working today: schema + content + code + design at runtime, immutable versions with rollback, the migration guard, preview at a real URL, **Preact islands** (partial hydration, no bundler), **form actions** with scoped record writes, **realtime channels** (WebSocket-backed Durable Objects), and **content-addressed static/design assets** in R2 (version-pinned, served with ETag/304).
-
-Planned:
-
-- **Cloudflare Artifacts** as the site-code store (git-compatible branches, diffs, and a `git clone` escape hatch) once it exits private beta — D1 is the store today
-- Broaden the dependency allowlist beyond `drizzle-orm`; a browser/client dependency path; dependency-blob GC
-- Durable Object Facets for per-feature/per-user sharded state (each feature its own SQLite, same Drizzle DX)
-- Code Mode on the merged endpoint (one `code` tool instead of forty)
-- Serve-time image transforms via the Cloudflare Images binding (resize/format from one stored original)
-- Rate limiting for public write routes; presigned direct-to-R2 for large human uploads
-
-See [`DECISIONS.md`](./DECISIONS.md) for the no-bundler architecture rationale (ADR-001).
+**A note on the name.** The project is being renamed **loki → loftur** ("Loftur" is the modern Icelandic form of *Loptr*, one of Loki's bynames — from *loft* = air/sky, an edge/cloud pun). The deployed Cloudflare Worker keeps the internal name `loki` and the runtime import namespaces stay `loki/runtime` and `loki/schema` — those are deploy/module names, never user-facing; renaming the Worker would strand its Durable Object data.
 
 ## License
 
 MIT © Jökull Sólberg
+</content>
+</invoke>

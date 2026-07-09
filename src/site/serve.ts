@@ -199,7 +199,7 @@ export async function smokeRender(
   );
 }
 
-const NO_SITE = `<!doctype html><html><head><meta charset="utf-8"><title>Loki</title></head><body style="font-family:system-ui;max-width:40rem;margin:4rem auto;padding:0 1rem"><h1>Loki</h1><p>No site has been published yet. Use the <code>site_write</code> and <code>publish_site</code> MCP tools to build one.</p></body></html>`;
+const NO_SITE = `<!doctype html><html><head><meta charset="utf-8"><title>Loftur</title></head><body style="font-family:system-ui;max-width:40rem;margin:4rem auto;padding:0 1rem"><h1>Loftur</h1><p>No site has been published here yet. Point an agent at this site's MCP endpoint and use the <code>site_write</code> and <code>publish_site</code> tools to build one.</p></body></html>`;
 
 function placeholder(): Response {
   return new Response(NO_SITE, {

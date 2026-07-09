@@ -16,6 +16,8 @@ function page(title: string, body: string): Response {
   const html = `<!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${title}</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='7' y='7' width='18' height='18' rx='3' transform='rotate(45 16 16)' fill='%23cf551d'/%3E%3C/svg%3E">
+<meta name="description" content="Loftur — vibe-code a real site, schema and all. Structured content, a per-site database, and editor MCP tokens.">
 <style>
   :root{--bg:#f4f6f9;--surface:#fff;--surface2:#edf0f5;--ink:#12161d;--soft:#454e5d;--muted:#737d8d;--border:#dde2ea;--accent:${BRAND.ember};--accentink:${BRAND.ember};--wash:#fbeee7}
   @media (prefers-color-scheme:dark){:root{--bg:#0d1016;--surface:#151a22;--surface2:#1c232e;--ink:#e9edf3;--soft:#b4bdca;--muted:#7e8896;--border:#253040;--accent:${BRAND.emberDark};--accentink:#f5945c;--wash:#2a1a10}}
@@ -62,8 +64,12 @@ function landing(error?: string, subValue = "", emailValue = ""): Response {
   return page(
     "Loftur — build a site by talking to an agent",
     `<header><span class="logo"><b>◆</b> Loftur</span></header>
-    <h1>Claim a subdomain. <span class="fire">Hand it to your agent.</span></h1>
-    <p class="lede">Loftur runs your site on the edge and lets an AI agent build it over MCP — routes, islands, server functions, live preview, versioned publishes. Pick a name, get a key, start building.</p>
+    <h1>Vibe-code a real site. <span class="fire">Schema and all.</span></h1>
+    <p class="lede">Most AI builders one-shot a good-looking page. Loftur one-shots the whole
+    thing on the edge over MCP — a <strong>real content schema</strong> (models, fields, a typed
+    GraphQL + schema API, DatoCMS-compatible), a per-site <strong>database</strong>, routes, islands,
+    and server functions. Then you hand <strong>editors a scoped MCP token</strong> to run the
+    content and upload images — no schema, no code, no CRUD dashboard to babysit.</p>
     <div class="card">
       <form method="POST" action="/api/signup">
         ${err}
@@ -83,7 +89,7 @@ function landing(error?: string, subValue = "", emailValue = ""): Response {
         <button type="submit">Claim it &amp; get my MCP key →</button>
       </form>
     </div>
-    <footer>Loftur · an agent-native site platform on Cloudflare. One key, one site, live at your subdomain.</footer>`,
+    <footer>Loftur · an agent-native site platform on Cloudflare. Real schemas, structured content, editor tokens — one isolated backend per site.</footer>`,
   );
 }
 
@@ -124,8 +130,10 @@ function successPage(subdomain: string, apiKey: string): Response {
         <p class="hint">Or drop this into your MCP client config:</p><pre>${escapeHtml(mcpJson)}</pre></li>
       <li><h3>Ask your agent to orient itself</h3>
         <p class="hint">Have it call the <code>site_help</code> tool first — it returns the routing conventions, the module shape, available imports, and the preview → publish workflow.</p></li>
-      <li><h3>Build, preview, publish</h3>
-        <p class="hint">The agent writes routes and islands with <code>site_write</code>/<code>shell</code>, checks work with <code>preview_site</code>, and ships with <code>publish_site</code>. Your site goes live at <a href="https://${escapeHtml(subdomain)}.loftur.app">${escapeHtml(subdomain)}.loftur.app</a>.</p></li>
+      <li><h3>Build a real schema, then the site</h3>
+        <p class="hint">The agent designs content models + fields (a typed GraphQL + schema API, DatoCMS-compatible), a per-site database via <code>feature_migrate</code>, and routes/islands with <code>site_write</code>/<code>shell</code>. Checks work with <code>preview_site</code>, ships with <code>publish_site</code>. Live at <a href="https://${escapeHtml(subdomain)}.loftur.app">${escapeHtml(subdomain)}.loftur.app</a>.</p></li>
+      <li><h3>Hand editors the content, not the build</h3>
+        <p class="hint">Ask the agent to <code>create_editor_token</code> — a scoped MCP token your editors point their own client at to write content and upload images. No schema changes, no code, no dashboard to maintain.</p></li>
     </ol>
     <footer>Lost your key? Key recovery isn't built yet — for now, keep it somewhere safe.</footer>`,
   );
