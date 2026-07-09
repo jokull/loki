@@ -310,6 +310,12 @@ config needed to start. Combine with \`env.SECRETS\`:
 Only HTTP(S) via \`fetch\` is mediated — raw TCP sockets are not available. Outbound
 fetch is server-only; the browser build never makes these calls.
 
+To RESTRICT egress, add an \`allowedHosts\` array to \`loki.config.json\` — requests to
+any other host are blocked (403). A listed host also allows its subdomains
+(\`stripe.com\` allows \`api.stripe.com\`). Omit it (or leave empty) to allow all hosts.
+
+    { "writableModels": [...], "allowedHosts": ["api.stripe.com", "api.resend.com"] }
+
 ## Transactional email (env.MAIL)
 
 Send email from a serverFn/loader with \`env.MAIL.send({ to, subject, html?, text? })\`

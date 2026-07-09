@@ -20,6 +20,7 @@ const SUITES = [
   ["logs  (env.LOG · site_logs · error capture)", "logs.mjs"],
   ["uploads (env.UPLOADS · /__uploads serving)", "uploads.mjs"],
   ["templates (scaffold_template · publish · render)", "templates.mjs"],
+  ["allowlist (outbound allowedHosts enforcement)", "allowlist.mjs"],
 ];
 
 function run(file) {

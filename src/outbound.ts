@@ -17,14 +17,35 @@ import { WorkerEntrypoint } from "cloudflare:workers";
 import type { Env } from "./env";
 import { DEFAULT_SITE_ID } from "./site/store";
 
-export class OutboundEntrypoint extends WorkerEntrypoint<Env, { siteId?: string }> {
+export class OutboundEntrypoint extends WorkerEntrypoint<
+  Env,
+  { siteId?: string; allowedHosts?: string[] }
+> {
   async fetch(request: Request): Promise<Response> {
     const siteId = this.ctx.props?.siteId ?? DEFAULT_SITE_ID;
+    const allowed = this.ctx.props?.allowedHosts ?? [];
     let host = "?";
+    let hostname = "";
     try {
-      host = new URL(request.url).host;
+      const u = new URL(request.url);
+      host = u.host;
+      hostname = u.hostname.toLowerCase();
     } catch {
       /* non-absolute URL — let fetch surface the error */
+    }
+    // Optional per-site allowlist: empty = allow all (backward compatible). A listed
+    // host matches exactly or as a parent domain (api.stripe.com allowed by stripe.com).
+    if (allowed.length > 0 && hostname) {
+      const okHost = allowed.some(
+        (h) => hostname === h || hostname.endsWith("." + h),
+      );
+      if (!okHost) {
+        console.log(`[outbound ${siteId}] BLOCKED ${host} (not in allowedHosts)`);
+        return new Response(
+          `Outbound request to "${host}" blocked: not in loki.config.json allowedHosts.`,
+          { status: 403, headers: { "content-type": "text/plain; charset=utf-8" } },
+        );
+      }
     }
     const started = Date.now();
     try {

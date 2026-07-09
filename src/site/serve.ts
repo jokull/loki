@@ -90,19 +90,29 @@ function makeGraphqlBinding(
   }) as Fetcher;
 }
 
-/** Parse the writable-model allowlist from the serving tree's loki.config.json. */
-export function parseWritableModels(bundle: Bundle): string[] {
+/** Parse a string-array field from the serving tree's loki.config.json. */
+function parseConfigList(bundle: Bundle, field: string): string[] {
   const raw = bundle["loki.config.json"];
   if (!raw) return [];
   try {
-    const cfg = JSON.parse(raw) as { writableModels?: unknown };
-    const list = cfg?.writableModels;
+    const cfg = JSON.parse(raw) as Record<string, unknown>;
+    const list = cfg?.[field];
     return Array.isArray(list)
       ? list.filter((m): m is string => typeof m === "string")
       : [];
   } catch {
     return [];
   }
+}
+
+/** Parse the writable-model allowlist from the serving tree's loki.config.json. */
+export function parseWritableModels(bundle: Bundle): string[] {
+  return parseConfigList(bundle, "writableModels");
+}
+
+/** Parse the outbound host allowlist (empty = allow all). */
+export function parseAllowedHosts(bundle: Bundle): string[] {
+  return parseConfigList(bundle, "allowedHosts").map((h) => h.toLowerCase());
 }
 
 async function runSite(
@@ -183,7 +193,9 @@ async function runSite(
   // through OutboundEntrypoint (per-site policy seam). Falls back to no network
   // if the entrypoint is somehow unavailable.
   const outbound = exports?.OutboundEntrypoint
-    ? (exports.OutboundEntrypoint({ props: { siteId } }) as Fetcher)
+    ? (exports.OutboundEntrypoint({
+        props: { siteId, allowedHosts: parseAllowedHosts(bundle) },
+      }) as Fetcher)
     : null;
   // Namespace the isolate by site so two sites with byte-identical bundles never
   // share an isolate (their capability env differs).
