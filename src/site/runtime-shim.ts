@@ -37,19 +37,38 @@ const ISLAND_BOOTSTRAP = `(function(){
       console.error("[loki island] hydration failed for " + src, err);
     });
   };
+  // The <loki-island> wrapper is rendered with display:contents, so it generates
+  // NO layout box of its own. An IntersectionObserver targeting it would never
+  // report an intersection (a box-less element is treated as never visible), so
+  // "visible" islands would silently never hydrate. Find the first descendant
+  // element that actually has a box and observe THAT instead. Returns null if
+  // the whole subtree is box-less (empty / all display:contents), in which case
+  // the caller hydrates immediately rather than never.
+  var firstObservable = function(el){
+    var r = el.getBoundingClientRect();
+    if (r.width > 0 || r.height > 0) return el;
+    var kids = el.querySelectorAll("*");
+    for (var k = 0; k < kids.length; k++) {
+      var kr = kids[k].getBoundingClientRect();
+      if (kr.width > 0 || kr.height > 0) return kids[k];
+    }
+    return null;
+  };
   var els = document.querySelectorAll("loki-island[data-loki-src]");
   for (var i = 0; i < els.length; i++) {
     (function(el){
       var client = el.getAttribute("data-loki-client") || "load";
       if (client === "idle") {
-        (window.requestIdleCallback || function(f){ setTimeout(f, 1); })(function(){ hydrateOne(el); });
+        (window.requestIdleCallback || function(f){ return setTimeout(f, 1); })(function(){ hydrateOne(el); });
       } else if (client === "visible" && "IntersectionObserver" in window) {
+        var target = firstObservable(el);
+        if (!target) { hydrateOne(el); return; }
         var io = new IntersectionObserver(function(entries, obs){
           for (var j = 0; j < entries.length; j++) {
-            if (entries[j].isIntersecting) { obs.disconnect(); hydrateOne(el); }
+            if (entries[j].isIntersecting) { obs.disconnect(); hydrateOne(el); return; }
           }
         });
-        io.observe(el);
+        io.observe(target);
       } else {
         hydrateOne(el);
       }

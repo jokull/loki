@@ -485,8 +485,10 @@ served to the browser (for hydration) — no separate client bundle.
 - \`src\` (required) — path of the component file in the site tree, e.g.
   \`"components/counter.tsx"\` (extension recommended).
 - \`client\` — WHEN to hydrate: \`"load"\` (default, immediately), \`"idle"\`
-  (requestIdleCallback), or \`"visible"\` (on first scroll into view). Prefer
-  \`idle\`/\`visible\` for below-the-fold widgets.
+  (requestIdleCallback), or \`"visible"\` (IntersectionObserver — hydrates as soon
+  as the island enters the viewport, i.e. immediately if it is already on-screen
+  at load, else on scroll into view). Prefer \`idle\`/\`visible\` for below-the-fold
+  widgets.
 - everything else is passed to the component as props. Props MUST be
   JSON-serializable (strings, numbers, booleans, null, arrays, plain objects) —
   they are serialized at SSR and re-parsed to hydrate. Passing a function or
@@ -705,7 +707,8 @@ Then \`publish_site\` — it snapshots the asset manifest into the version and w
 ## Workflow
 
 0. schema_types()                          -> read the content types before querying
-1. site_write("routes/index.tsx", "...")   (transpiled + gql validated; errors returned)
+1. site_write("routes/index.tsx", "...")   (file contents go in \`source\`; \`content\`
+   is accepted as an alias. transpiled + gql validated; errors returned)
 2. preview_site()                          -> open the returned URL to see the DRAFT
 3. publish_site("message")                 -> validates + smoke-renders + snapshots
 4. rollback_site(versionId) / site_versions() as needed

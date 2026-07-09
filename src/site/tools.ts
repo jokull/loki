@@ -155,12 +155,33 @@ export const SITE_TOOLS: SiteTool[] = [
       "Create or overwrite a site file in the draft tree. TSX/TS/JSX/JS are transpiled immediately (sucrase, preact JSX); transpile errors are returned and the write is REJECTED. Other files (styles.css, *.graphql) are stored as-is. " +
       "After a successful write, every gql`...` document in the file (and standalone *.graphql files) is VALIDATED against the live CMS schema; any problems come back in a `graphqlErrors` block (with precise messages like `Cannot query field \"x\" on type \"BlogPostRecord\". Did you mean \"y\"?`). These are NON-FATAL — the file is still saved so you can write a component before its query is finished — but fix them before publish_site, which hard-gates on the same validation. " +
       "You may also `import` from resolver-allowlisted npm packages (currently the `drizzle-orm` scope and its subpaths): Loki resolves them via esm.sh at write time, snapshots a self-contained version-pinned copy, and returns a `resolvedDeps` block. Resolving a package for the FIRST time may take a few seconds (crawl + store); an unknown bare specifier, or one needing Node built-ins, is REJECTED. " +
-      "For typed authoring, read the `schema_types` tool output and `import type { BlogPostRecord } from \"loki/schema\"`.",
+      "For typed authoring, read the `schema_types` tool output and `import type { BlogPostRecord } from \"loki/schema\"`.\n\n" +
+      "The file contents go in the `source` parameter (`content` is accepted as an alias).",
     inputSchema: {
       path: z.string().describe("Repo-relative path, e.g. routes/index.tsx or styles.css"),
-      source: z.string().describe("Full file contents"),
+      source: z
+        .string()
+        .optional()
+        .describe("Full file contents (alias: `content`)"),
+      content: z
+        .string()
+        .optional()
+        .describe("Alias for `source` — full file contents"),
     },
-    async handler({ path, source }, { env }) {
+    async handler({ path, source, content }, { env }) {
+      if (source != null && content != null && source !== content) {
+        return errorResult(
+          "site_write: pass the file contents in `source` OR `content`, not both " +
+            "with differing values (they are aliases for the same parameter).",
+        );
+      }
+      source = source ?? content;
+      if (source == null) {
+        return errorResult(
+          "site_write: missing file contents — provide the `source` parameter " +
+            "(its alias `content` also works).",
+        );
+      }
       const result = transpileModule(path, source);
       if (!result.ok) {
         return errorResult(`Transpile failed for ${path}:\n${result.error}`);
