@@ -21,7 +21,34 @@ export interface SiteVersion {
   assets: string | null; // JSON asset manifest: { [path]: AssetManifestEntry }
   /** JSON: { [path]: clientCompiled } — browser stubs for serverFn modules. */
   client_bundle: string | null;
+  /** JSON DepSnapshot: resolved npm dep pins (esm.sh). NULL on legacy rows. */
+  deps: string | null;
 }
+
+// ---- resolved npm deps (site_deps lockfile + version snapshot) --------------
+
+/** One resolver lockfile row (site_deps). */
+export interface SiteDep {
+  specifier: string;
+  version: string;
+  entry_key: string;
+  /** JSON: { localKey: blobHash }. */
+  module_manifest: string;
+  dep_hash: string;
+  created_at: string;
+}
+
+/** A resolved dep as snapshotted per version / assembled at serve time. */
+export interface DepManifestEntry {
+  version: string;
+  entryKey: string;
+  depHash: string;
+  /** { localKey: blobHash } — every module in the self-contained set. */
+  manifest: Record<string, string>;
+}
+
+/** Per-bundle resolved deps: specifier -> pin. */
+export type DepSnapshot = Record<string, DepManifestEntry>;
 
 /** Draft asset row (site_assets). `path` always starts with `public/`. */
 export interface SiteAsset {
@@ -94,9 +121,10 @@ export async function insertVersion(
   footprint: unknown,
   assets: AssetManifest,
   clientBundle: Record<string, string>,
+  deps: DepSnapshot,
 ): Promise<number> {
   const res = await env.DB.prepare(
-    "INSERT INTO site_versions (message, bundle, footprint, assets, client_bundle) VALUES (?, ?, ?, ?, ?)",
+    "INSERT INTO site_versions (message, bundle, footprint, assets, client_bundle, deps) VALUES (?, ?, ?, ?, ?, ?)",
   )
     .bind(
       message,
@@ -104,6 +132,7 @@ export async function insertVersion(
       JSON.stringify(footprint),
       JSON.stringify(assets),
       JSON.stringify(clientBundle),
+      JSON.stringify(deps),
     )
     .run();
   return Number(res.meta.last_row_id);
@@ -114,10 +143,77 @@ export async function getVersion(
   id: number,
 ): Promise<SiteVersion | null> {
   return await env.DB.prepare(
-    "SELECT id, created_at, message, bundle, footprint, assets, client_bundle FROM site_versions WHERE id = ?",
+    "SELECT id, created_at, message, bundle, footprint, assets, client_bundle, deps FROM site_versions WHERE id = ?",
   )
     .bind(id)
     .first<SiteVersion>();
+}
+
+/** Parse a version row's snapshotted dep pins (empty on legacy rows). */
+export function versionDepSnapshot(version: SiteVersion): DepSnapshot {
+  if (!version.deps) return {};
+  try {
+    const parsed = JSON.parse(version.deps) as DepSnapshot;
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+// ---- site_deps (resolver lockfile) ------------------------------------------
+
+export async function getDep(
+  env: Env,
+  specifier: string,
+): Promise<SiteDep | null> {
+  return await env.DB.prepare(
+    "SELECT specifier, version, entry_key, module_manifest, dep_hash, created_at FROM site_deps WHERE specifier = ?",
+  )
+    .bind(specifier)
+    .first<SiteDep>();
+}
+
+export async function upsertDep(
+  env: Env,
+  specifier: string,
+  version: string,
+  entryKey: string,
+  moduleManifest: Record<string, string>,
+  depHash: string,
+): Promise<void> {
+  await env.DB.prepare(
+    `INSERT INTO site_deps (specifier, version, entry_key, module_manifest, dep_hash, created_at)
+     VALUES (?, ?, ?, ?, ?, datetime('now'))
+     ON CONFLICT(specifier) DO UPDATE SET
+       version = excluded.version,
+       entry_key = excluded.entry_key,
+       module_manifest = excluded.module_manifest,
+       dep_hash = excluded.dep_hash,
+       created_at = excluded.created_at`,
+  )
+    .bind(specifier, version, entryKey, JSON.stringify(moduleManifest), depHash)
+    .run();
+}
+
+/** The lockfile row parsed into a DepManifestEntry (or null if unresolved). */
+export async function getDepEntry(
+  env: Env,
+  specifier: string,
+): Promise<DepManifestEntry | null> {
+  const row = await getDep(env, specifier);
+  if (!row) return null;
+  let manifest: Record<string, string>;
+  try {
+    manifest = JSON.parse(row.module_manifest) as Record<string, string>;
+  } catch {
+    return null;
+  }
+  return {
+    version: row.version,
+    entryKey: row.entry_key,
+    depHash: row.dep_hash,
+    manifest,
+  };
 }
 
 /** Parse a version row's snapshotted browser stubs (empty on legacy rows). */

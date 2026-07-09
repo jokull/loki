@@ -16,6 +16,7 @@ import {
 import type { Env } from "../env";
 import { getCms } from "../env";
 import { buildDraftBundle, smokeRender } from "./serve";
+import { draftDepSnapshot } from "./deps";
 import { buildClientBuild } from "./transpile";
 import {
   buildDraftAssetManifest,
@@ -371,6 +372,10 @@ export async function publishSite(
     assetManifest,
   );
 
+  // (e2) snapshot the resolved npm-dep pins so published/preview/rollback all
+  // serve identical, version-pinned esm.sh bytes (the blobs already live in R2).
+  const deps = await draftDepSnapshot(env, bundle);
+
   // (f) snapshot + repoint
   const versionId = await insertVersion(
     env,
@@ -379,6 +384,7 @@ export async function publishSite(
     footprint,
     assetManifest,
     clientBundle,
+    deps,
   );
   await setState(env, "published_version", String(versionId));
 

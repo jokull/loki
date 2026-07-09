@@ -20,6 +20,13 @@ import {
   type AssetManifest,
 } from "./store";
 import { transpileModule, buildClientBuild } from "./transpile";
+import {
+  allowedScopesDoc,
+  BUILTIN_SPECIFIERS,
+  isAllowedDep,
+  parseBareImports,
+  resolveDep,
+} from "./deps";
 import { buildDraftBundle } from "./serve";
 import {
   extractDocsFromFile,
@@ -164,6 +171,50 @@ export const SITE_TOOLS: SiteTool[] = [
       if (!clientBuild.ok) {
         return errorResult(`Write rejected for ${path}:\n${clientBuild.error}`);
       }
+
+      // Dependency resolution (npm-dep spike). Detect bare specifiers this file
+      // imports. Loki built-ins (preact family, loki/runtime, loki/schema) are
+      // injected already. Allowlisted deps (drizzle-orm scope) are resolved +
+      // snapshotted via esm.sh in the supervisor NOW so the pin is recorded
+      // before publish. An unknown bare specifier, or a resolution/compat
+      // failure, REJECTS the write (like a transpile error) so the tree never
+      // holds an unresolvable import. This mirrors the write-time gql ethos.
+      const resolvedDeps: Array<{
+        specifier: string;
+        version: string;
+        files: number;
+        bytes: number;
+        loadable: true;
+      }> = [];
+      for (const specifier of parseBareImports(source)) {
+        if (BUILTIN_SPECIFIERS.has(specifier)) continue;
+        if (!isAllowedDep(specifier)) {
+          return errorResult(
+            `Write rejected for ${path}: unknown import "${specifier}". ` +
+              `Allowed imports are the Loki built-ins (preact, preact/hooks, ` +
+              `preact/jsx-runtime, preact-render-to-string, loki/runtime, ` +
+              `loki/schema) and resolver-allowlisted npm packages: ` +
+              `${allowedScopesDoc()} (and their subpaths). To add a package, ` +
+              `it must be ESM and workerd-compatible without node builtins.`,
+          );
+        }
+        try {
+          const dep = await resolveDep(env, specifier);
+          resolvedDeps.push({
+            specifier: dep.specifier,
+            version: dep.version,
+            files: dep.files,
+            bytes: dep.bytes,
+            loadable: true,
+          });
+        } catch (err) {
+          return errorResult(
+            `Write rejected for ${path}: could not resolve dependency ` +
+              `"${specifier}" via esm.sh:\n${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
+
       await writeFile(
         env,
         path,
@@ -174,7 +225,11 @@ export const SITE_TOOLS: SiteTool[] = [
       const stubNote = clientBuild.clientCompiled
         ? ", serverFn module (browser gets a stub build)"
         : "";
-      const base = `Wrote ${path} (${source.length} bytes${result.code ? ", transpiled" : ""}${stubNote}).`;
+      const depNote =
+        resolvedDeps.length > 0
+          ? `\nresolvedDeps: ${JSON.stringify(resolvedDeps)}`
+          : "";
+      const base = `Wrote ${path} (${source.length} bytes${result.code ? ", transpiled" : ""}${stubNote}).${depNote}`;
 
       // Write-time gql validation: extract this file's documents and validate
       // them against the live schema so field/type mistakes surface NOW, not at

@@ -13,12 +13,13 @@ import { preactJsxRuntime } from "../vendor/preact-jsx-runtime";
 import { preactRenderToString } from "../vendor/preact-render-to-string";
 import { RUNTIME_MODULE } from "./runtime-shim";
 import { isTranspilable } from "./transpile";
+import type { AssembledDeps } from "./deps";
 
 export type Bundle = Record<string, string>;
 
 // Bump when the runtime shim, vendor modules, or bundle builder change — it is
 // mixed into every LOADER id so cached isolates are invalidated.
-export const RUNTIME_VERSION = "r10";
+export const RUNTIME_VERSION = "r11";
 
 const ENTRY_NAME = "__loki_entry.js";
 const COMPAT_DATE = "2026-07-01";
@@ -37,25 +38,41 @@ const VENDOR_FILES: Record<string, string> = {
   "loki/runtime": "loki_runtime.js",
 };
 
-const SPECIFIER_RE = new RegExp(
-  `(\\bfrom\\s*|\\bimport\\s*\\(\\s*)(["'])(${Object.keys(VENDOR_FILES)
-    .map((s) => s.replace(/[/\\^$*+?.()|[\]{}]/g, "\\$&"))
-    .join("|")})(["'])`,
-  "g",
-);
-
 /** "../" * depth of the importer key (root = "./"). */
 function relPrefix(importerKey: string): string {
   const depth = (importerKey.match(/\//g) || []).length;
   return depth === 0 ? "./" : "../".repeat(depth);
 }
 
-/** Rewrite bare runtime specifiers to relative paths to the flat vendor files. */
-function rewriteSpecifiers(code: string, importerKey: string): string {
+/**
+ * Build a regex matching any of `specifiers` in a `from "..."` / `import("...")`
+ * position. Rebuilt per bundle because the resolvable dep specifiers vary.
+ */
+function buildSpecifierRe(specifiers: string[]): RegExp {
+  return new RegExp(
+    `(\\bfrom\\s*|\\bimport\\s*\\(\\s*)(["'])(${specifiers
+      .map((s) => s.replace(/[/\\^$*+?.()|[\]{}]/g, "\\$&"))
+      .join("|")})(["'])`,
+    "g",
+  );
+}
+
+/**
+ * Rewrite each bare specifier in `fileMap` (vendor built-ins + resolved deps) to
+ * a depth-correct relative path to its module-map key. Both flat vendor
+ * filenames and namespaced `deps/<hash>/<key>` targets resolve URL-relative to
+ * the importer, so the same relPrefix applies to both.
+ */
+function rewriteSpecifiers(
+  code: string,
+  importerKey: string,
+  fileMap: Record<string, string>,
+  re: RegExp,
+): string {
   const prefix = relPrefix(importerKey);
   return code.replace(
-    SPECIFIER_RE,
-    (_m, pre, q, spec) => `${pre}${q}${prefix}${VENDOR_FILES[spec]}${q}`,
+    re,
+    (_m, pre, q, spec) => `${pre}${q}${prefix}${fileMap[spec]}${q}`,
   );
 }
 
@@ -105,20 +122,35 @@ export interface BuiltWorker {
   modules: Record<string, { js: string }>;
 }
 
-export function buildWorkerCode(bundle: Bundle): BuiltWorker {
+const EMPTY_DEPS: AssembledDeps = { depModules: {}, specifierMap: {} };
+
+export function buildWorkerCode(
+  bundle: Bundle,
+  deps: AssembledDeps = EMPTY_DEPS,
+): BuiltWorker {
+  // The rewrite map: bare runtime built-ins (flat vendor files) + resolved dep
+  // entry specifiers (namespaced `deps/<hash>/<entry>`). Rebuilt per bundle.
+  const fileMap: Record<string, string> = { ...VENDOR_FILES, ...deps.specifierMap };
+  const re = buildSpecifierRe(Object.keys(fileMap));
+  const rw = (code: string, importerKey: string) =>
+    rewriteSpecifiers(code, importerKey, fileMap, re);
+
   const modules: Record<string, { js: string }> = {
-    "loki_preact.js": { js: rewriteSpecifiers(preact, "loki_preact.js") },
-    "loki_preact_hooks.js": {
-      js: rewriteSpecifiers(preactHooks, "loki_preact_hooks.js"),
-    },
+    "loki_preact.js": { js: rw(preact, "loki_preact.js") },
+    "loki_preact_hooks.js": { js: rw(preactHooks, "loki_preact_hooks.js") },
     "loki_preact_jsx_runtime.js": {
-      js: rewriteSpecifiers(preactJsxRuntime, "loki_preact_jsx_runtime.js"),
+      js: rw(preactJsxRuntime, "loki_preact_jsx_runtime.js"),
     },
-    "loki_preact_rts.js": {
-      js: rewriteSpecifiers(preactRenderToString, "loki_preact_rts.js"),
-    },
-    "loki_runtime.js": { js: rewriteSpecifiers(RUNTIME_MODULE, "loki_runtime.js") },
+    "loki_preact_rts.js": { js: rw(preactRenderToString, "loki_preact_rts.js") },
+    "loki_runtime.js": { js: rw(RUNTIME_MODULE, "loki_runtime.js") },
   };
+
+  // Inject resolved dependency modules verbatim (their internal imports are
+  // already relative `./local` within their `deps/<hash>/` namespace, and the
+  // snapshot has zero esm.sh references — nothing to rewrite).
+  for (const [key, code] of Object.entries(deps.depModules)) {
+    modules[key] = { js: code };
+  }
 
   const styles = bundle["styles.css"] ?? null;
 
@@ -126,7 +158,7 @@ export function buildWorkerCode(bundle: Bundle): BuiltWorker {
   // path, plus an extensionless alias so relative imports can omit the ext.
   for (const [path, content] of Object.entries(bundle)) {
     if (!isTranspilable(path)) continue;
-    const js = rewriteSpecifiers(content, path);
+    const js = rw(content, path);
     modules[path] = { js };
     const alias = stripExt(path);
     if (alias !== path && !(alias in modules)) modules[alias] = { js };
