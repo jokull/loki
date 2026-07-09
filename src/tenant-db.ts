@@ -204,32 +204,153 @@ export class TenantDB extends DurableObject<Env> {
     return { status: res.status, headers: outHeaders, body: await res.text() };
   }
 
-  /**
-   * Feature-data SQL for this tenant's serverFns (drizzle sqlite-proxy shape).
-   * Same contract as FeaturesDbEntrypoint.exec but over this DO's SqlStorage —
-   * so a tenant's Drizzle queries hit ITS OWN tables. Tenant app tables live in
-   * this same SQLite (create them with CREATE TABLE via method "run").
-   */
-  async featureExec(
-    sql: string,
-    params: unknown[] = [],
-    method: "run" | "all" | "get" | "values" = "all",
-  ): Promise<{ rows: unknown }> {
-    const cursor = this.sqlStore.exec(sql, ...(params as any[]));
-    if (method === "run") {
-      cursor.toArray(); // drain/commit
-      return { rows: [] };
-    }
-    const rows = [...cursor.raw()] as unknown[][]; // positional value arrays
-    if (method === "get") return { rows: rows[0] };
-    return { rows };
-  }
-
   /** Cheap health/inspection: table names in this tenant's SQLite. */
   async tables(): Promise<string[]> {
     return this.sqlStore
       .exec("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
       .toArray()
       .map((r: any) => r.name as string);
+  }
+}
+
+// ---- TenantFeatureDB: the tenant's own app-data database ---------------------
+
+export interface FeatureColumn {
+  name: string;
+  type: string;
+  notnull: boolean;
+  pk: boolean;
+}
+export type FeatureSchema = Record<string, FeatureColumn[]>;
+
+/** One versioned feature migration: `name` is a stable id, `up` is DDL/SQL. */
+export interface FeatureMigration {
+  name: string;
+  up: string;
+}
+
+/** Split a migration body into individual statements (SqlStorage runs one at a
+ * time). Naive `;` split — fine for DDL; string literals with `;` are rare in
+ * schema migrations. */
+function splitStatements(sql: string): string[] {
+  return sql
+    .split(";")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+}
+
+/**
+ * The tenant's FEATURE database — a SQLite-backed DO holding the app tables the
+ * agent designs at runtime (guestbooks, todos, orders, …), SEPARATE from the
+ * content DB (TenantDB) so feature table names never collide with agent-cms's
+ * reserved tables. One instance per site (idFromName(siteId)).
+ *
+ * The site isolate reaches it as `env.FEATURES_SQL` (drizzle sqlite-proxy) via
+ * TenantFeaturesEntrypoint; the agent evolves its schema via the feature_migrate
+ * / feature_schema / feature_query MCP tools, which call the methods here.
+ */
+export class TenantFeatureDB extends DurableObject<Env> {
+  private readonly sqlStore: SqlStorage;
+
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
+    this.sqlStore = ctx.storage.sql;
+  }
+
+  /** drizzle sqlite-proxy contract: positional rows for reads, empty for run. */
+  async exec(
+    sql: string,
+    params: unknown[] = [],
+    method: "run" | "all" | "get" | "values" = "all",
+  ): Promise<{ rows: unknown }> {
+    const cursor = this.sqlStore.exec(sql, ...(params as any[]));
+    if (method === "run") {
+      cursor.toArray();
+      return { rows: [] };
+    }
+    const rows = [...cursor.raw()] as unknown[][];
+    if (method === "get") return { rows: rows[0] };
+    return { rows };
+  }
+
+  /**
+   * Apply versioned migrations idempotently. Already-applied names (tracked in
+   * `_migrations`) are skipped; each new one runs its statements + is recorded
+   * atomically (transactionSync — a failed migration rolls back and is NOT
+   * recorded). Returns JSON { applied, skipped, failed?, schema }.
+   */
+  async migrate(migrations: FeatureMigration[]): Promise<string> {
+    this.sqlStore.exec(
+      "CREATE TABLE IF NOT EXISTS _migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+    );
+    const applied: string[] = [];
+    const skipped: string[] = [];
+    let failed: { name: string; error: string } | undefined;
+    for (const m of migrations) {
+      const already =
+        this.sqlStore
+          .exec("SELECT 1 FROM _migrations WHERE name = ?", m.name)
+          .toArray().length > 0;
+      if (already) {
+        skipped.push(m.name);
+        continue;
+      }
+      try {
+        this.ctx.storage.transactionSync(() => {
+          for (const stmt of splitStatements(m.up)) this.sqlStore.exec(stmt);
+          this.sqlStore.exec("INSERT INTO _migrations (name) VALUES (?)", m.name);
+        });
+        applied.push(m.name);
+      } catch (err) {
+        failed = { name: m.name, error: err instanceof Error ? err.message : String(err) };
+        break; // stop at the first failure (later migrations may depend on it)
+      }
+    }
+    return JSON.stringify({ applied, skipped, failed, schema: this.schemaObject() });
+  }
+
+  /** Current feature schema (tables → columns), excluding internal tables. */
+  async schema(): Promise<string> {
+    return JSON.stringify({ schema: this.schemaObject() });
+  }
+
+  private schemaObject(): FeatureSchema {
+    const tables = this.sqlStore
+      .exec(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name != '_migrations' ORDER BY name",
+      )
+      .toArray()
+      .map((r: any) => r.name as string);
+    const out: FeatureSchema = {};
+    for (const t of tables) {
+      out[t] = this.sqlStore
+        .exec(`PRAGMA table_info("${t.replace(/"/g, '""')}")`)
+        .toArray()
+        .map((c: any) => ({
+          name: c.name as string,
+          type: c.type as string,
+          notnull: !!c.notnull,
+          pk: !!c.pk,
+        }));
+    }
+    return out;
+  }
+
+  /**
+   * Run an agent-supplied SQL query for inspection/seeding (feature_query tool).
+   * Returns JSON { columns, rows } for reads, or { changes } for writes.
+   */
+  async query(
+    sql: string,
+    params: unknown[] = [],
+    write: boolean,
+  ): Promise<string> {
+    const cursor = this.sqlStore.exec(sql, ...(params as any[]));
+    if (write) {
+      cursor.toArray();
+      return JSON.stringify({ ok: true, rowsWritten: cursor.rowsWritten });
+    }
+    const rows = cursor.toArray();
+    return JSON.stringify({ columns: cursor.columnNames, rows });
   }
 }

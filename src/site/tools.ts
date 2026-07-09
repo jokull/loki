@@ -35,6 +35,7 @@ import {
 import { getSchemaBundle } from "./schema-types";
 import { runShell, resetDraft, formatShellResult } from "./shell";
 import { SITE_HELP } from "./help";
+import { siteOrigin } from "../tenants";
 import type { Bundle } from "./bundle";
 import {
   assetServingUrl,
@@ -91,6 +92,25 @@ function text(t: string): SiteToolResult {
 }
 function errorResult(t: string): SiteToolResult {
   return { content: [{ type: "text", text: t }], isError: true };
+}
+
+/** The tenant's feature-DB Durable Object stub for this site. */
+function featureStub(env: Env, siteId: string) {
+  return env.TENANT_FEATURE_DB.get(env.TENANT_FEATURE_DB.idFromName(siteId));
+}
+
+/** Render a feature schema (tables → columns) as a compact text block. */
+function formatSchema(schema: Record<string, Array<{ name: string; type: string; notnull: boolean; pk: boolean }>>): string {
+  const tables = Object.keys(schema);
+  if (tables.length === 0) return "(no feature tables yet)";
+  return tables
+    .map((t) => {
+      const cols = schema[t]
+        .map((c) => `${c.name} ${c.type}${c.pk ? " PK" : ""}${c.notnull ? " NOT NULL" : ""}`)
+        .join(", ");
+      return `- ${t}(${cols})`;
+    })
+    .join("\n");
 }
 
 export interface SiteTool {
@@ -545,13 +565,17 @@ export const SITE_TOOLS: SiteTool[] = [
       const token = crypto.randomUUID().replace(/-/g, "");
       const expires = Date.now() + 30 * 60 * 1000;
       await setState(env, siteId, "preview_token", JSON.stringify({ token, expires }));
-      const url = `${SITE_ORIGIN}/__preview?token=${token}`;
+      // Preview must be served from THIS site's own origin (its subdomain) so the
+      // Host resolves to the right tenant; the workers.dev origin is the default
+      // site's fallback only.
+      const origin = await siteOrigin(env, siteId, SITE_ORIGIN);
+      const url = `${origin}/__preview?token=${token}`;
       return text(
         `Preview ready (valid 30 min):\n${url}\n\n` +
           `Browser: open it — sets the HttpOnly cookie \`loki_preview\` and redirects to /.\n` +
           `Programmatic (curl -c jar -b jar / fetch with a cookie jar):\n` +
           `  1. GET ${url}  (follow the 302; stores the loki_preview cookie)\n` +
-          `  2. GET ${SITE_ORIGIN}/<any draft path>  reusing the jar -> draft HTML\n` +
+          `  2. GET ${origin}/<any draft path>  reusing the jar -> draft HTML\n` +
           `The token lasts 30 min and is independent of edits: after more site_write calls, ` +
           `just re-request with the same jar (no new token needed until it expires).`,
       );
@@ -680,6 +704,77 @@ export const SITE_TOOLS: SiteTool[] = [
         `Draft reset to the published version (${r.restoredFiles} file(s), ` +
           `${r.restoredAssets} asset(s)). site_diff is now clean. ${note}`,
       );
+    },
+  },
+  {
+    name: "feature_migrate",
+    description:
+      "Evolve this site's FEATURE database — the SQLite tables your app code reads and " +
+      "writes (guestbooks, todos, orders, …), separate from the content models. Apply ONE " +
+      "named, versioned migration: `name` is a stable id (e.g. \"0001_create_posts\"), `up` " +
+      "is the SQL (CREATE TABLE / ALTER TABLE / CREATE INDEX; multiple statements separated " +
+      "by `;`). Idempotent: a name that's already been applied is skipped, so it's safe to " +
+      "re-run. Returns the resulting schema. Your serverFns/loaders then query these tables " +
+      "with Drizzle over `env.FEATURES_SQL` (drizzle-orm/sqlite-proxy + featuresDriver). Each " +
+      "site's feature DB is fully isolated. Use standard SQLite types (INTEGER, TEXT, REAL).",
+    inputSchema: {
+      name: z.string().describe("Stable migration id, e.g. 0001_create_posts"),
+      up: z.string().describe("SQL to apply (CREATE/ALTER/…; `;`-separated statements)"),
+    },
+    async handler({ name, up }, { env, siteId }) {
+      const res = JSON.parse(await featureStub(env, siteId).migrate([{ name, up }])) as {
+        applied: string[];
+        skipped: string[];
+        failed?: { name: string; error: string };
+        schema: any;
+      };
+      if (res.failed) {
+        return errorResult(
+          `Migration "${res.failed.name}" failed and was NOT applied:\n  ${res.failed.error}`,
+        );
+      }
+      const head = res.applied.length
+        ? `Applied migration "${res.applied.join(", ")}".`
+        : `"${name}" was already applied (no-op).`;
+      return text(`${head}\n\nFeature schema:\n${formatSchema(res.schema)}`);
+    },
+  },
+  {
+    name: "feature_schema",
+    description:
+      "Show this site's current FEATURE database schema (tables and columns) — the app " +
+      "tables managed with feature_migrate. Read this before writing serverFns that query them.",
+    inputSchema: {},
+    async handler(_args, { env, siteId }) {
+      const { schema } = JSON.parse(await featureStub(env, siteId).schema()) as {
+        schema: Record<string, any[]>;
+      };
+      return Object.keys(schema).length
+        ? text(`Feature schema:\n${formatSchema(schema)}`)
+        : text("No feature tables yet. Create one with feature_migrate.");
+    },
+  },
+  {
+    name: "feature_query",
+    description:
+      "Run a SQL statement against this site's FEATURE database for inspection or seeding " +
+      "(NOT the request hot path — your app code uses env.FEATURES_SQL/Drizzle for that). " +
+      "Reads return { columns, rows }; set write:true for INSERT/UPDATE/DELETE. `params` are " +
+      "positional bind values (use them instead of string-concatenating values).",
+    inputSchema: {
+      sql: z.string().describe("A single SQL statement"),
+      params: z.array(z.unknown()).optional().describe("Positional bind params"),
+      write: z.boolean().optional().describe("true for INSERT/UPDATE/DELETE"),
+    },
+    async handler({ sql, params, write }, { env, siteId }) {
+      try {
+        const r = JSON.parse(
+          await featureStub(env, siteId).query(sql, (params as unknown[]) ?? [], !!write),
+        );
+        return jsonText(r);
+      } catch (err) {
+        return errorResult(`feature_query failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
     },
   },
   {

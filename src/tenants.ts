@@ -86,6 +86,28 @@ export async function getSiteBySubdomain(
     .first<Site>();
 }
 
+export async function getSiteById(
+  env: Env,
+  id: string,
+): Promise<Site | null> {
+  return await env.DB.prepare(
+    "SELECT id, subdomain, email, api_key_hash, created_at FROM sites WHERE id = ?",
+  )
+    .bind(id)
+    .first<Site>();
+}
+
+/** The public origin a site is served from (for preview/absolute URLs). */
+export async function siteOrigin(
+  env: Env,
+  siteId: string,
+  fallback: string,
+): Promise<string> {
+  if (siteId === DEFAULT_SITE_ID) return fallback;
+  const site = await getSiteById(env, siteId);
+  return site ? `https://${site.subdomain}.loftur.app` : fallback;
+}
+
 export async function getSiteByApiKey(
   env: Env,
   key: string,

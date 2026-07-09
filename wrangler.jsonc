@@ -45,6 +45,10 @@
       {
         "name": "TENANT_DB",
         "class_name": "TenantDB"
+      },
+      {
+        "name": "TENANT_FEATURE_DB",
+        "class_name": "TenantFeatureDB"
       }
     ]
   },
@@ -56,6 +60,10 @@
     {
       "tag": "v2",
       "new_sqlite_classes": ["TenantDB"]
+    },
+    {
+      "tag": "v3",
+      "new_sqlite_classes": ["TenantFeatureDB"]
     }
   ]
 }

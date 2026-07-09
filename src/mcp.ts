@@ -52,9 +52,11 @@ function shapeToJsonSchema(shape: z.ZodRawShape): Record<string, unknown> {
         ? { type: "number" }
         : tn === "ZodBoolean"
           ? { type: "boolean" }
-          : tn === "ZodRecord" || tn === "ZodObject"
-            ? { type: "object", additionalProperties: true }
-            : { type: "string" };
+          : tn === "ZodArray"
+            ? { type: "array", items: {} }
+            : tn === "ZodRecord" || tn === "ZodObject"
+              ? { type: "object", additionalProperties: true }
+              : { type: "string" };
     const description = (schema as any).description ?? (inner as any).description;
     if (description) prop.description = description;
     properties[key] = prop;

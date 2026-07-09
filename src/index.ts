@@ -38,7 +38,7 @@ export type { Env };
 export { ChannelDO, RealtimeEntrypoint } from "./realtime";
 export { RecordsEntrypoint } from "./records";
 export { FeaturesDbEntrypoint, TenantFeaturesEntrypoint } from "./features-db";
-export { TenantDB } from "./tenant-db";
+export { TenantDB, TenantFeatureDB } from "./tenant-db";
 
 /**
  * Loopback GraphQL entrypoint for the dynamic site worker.

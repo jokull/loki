@@ -75,7 +75,9 @@ export class TenantFeaturesEntrypoint extends WorkerEntrypoint<
     method: SqlMethod = "all",
   ): Promise<SqlExecResult> {
     const siteId = this.ctx.props?.siteId ?? DEFAULT_SITE_ID;
-    const stub = this.env.TENANT_DB.get(this.env.TENANT_DB.idFromName(siteId));
-    return await stub.featureExec(sql, params, method);
+    const stub = this.env.TENANT_FEATURE_DB.get(
+      this.env.TENANT_FEATURE_DB.idFromName(siteId),
+    );
+    return await stub.exec(sql, params, method);
   }
 }
