@@ -16,6 +16,15 @@ import type { Env } from "./env";
 import { callCmsTool, listCmsTools } from "./cms-bridge";
 import { GUARDED_TOOLS, guardSchemaOp } from "./guard";
 import { SITE_TOOLS, type SiteTool } from "./site/tools";
+import { getSiteByApiKey } from "./tenants";
+import { DEFAULT_SITE_ID } from "./site/store";
+
+/**
+ * Site tools that read the SHARED agent-cms (content/schema). v1 defers
+ * per-tenant CMS, so tenant sites don't get these (they'd see the default
+ * site's content). The legacy default site keeps the full toolset.
+ */
+const CMS_BACKED_SITE_TOOLS = new Set(["graphql_query", "schema_types"]);
 
 /** Extract the bearer token from an Authorization header (Bearer or bare). */
 function bearerToken(request: Request): string | null {
@@ -68,33 +77,48 @@ function siteToolResultToMcp(result: {
   return { content: result.content, isError: result.isError ?? false };
 }
 
-function buildServer(env: Env, ctx: ExecutionContext): Server {
+/**
+ * Build the MCP server for a resolved site. `includeCms` gates the shared
+ * agent-cms toolset + CMS-backed site tools (only the legacy default site).
+ */
+function buildServer(
+  env: Env,
+  ctx: ExecutionContext,
+  siteId: string,
+  includeCms: boolean,
+): Server {
   const server = new Server(
-    { name: "loki", version: "0.1.0" },
+    { name: "loftur", version: "0.1.0" },
     { capabilities: { tools: {} } },
   );
 
+  const availableSiteTools = SITE_TOOLS.filter(
+    (t) => includeCms || !CMS_BACKED_SITE_TOOLS.has(t.name),
+  );
+
   server.setRequestHandler(ListToolsRequestSchema, async () => {
-    const siteToolDefs = SITE_TOOLS.map((t) => ({
+    const siteToolDefs = availableSiteTools.map((t) => ({
       name: t.name,
       description: t.description,
       inputSchema: shapeToJsonSchema(t.inputSchema) as any,
     }));
     let cmsTools: any[] = [];
-    try {
-      cmsTools = await listCmsTools(env);
-    } catch (err) {
-      // Surface CMS bridge failure as a pseudo-tool so tools/list still returns
-      // Loki's own tools rather than 500-ing the whole endpoint.
-      cmsTools = [
-        {
-          name: "__cms_unavailable",
-          description:
-            "agent-cms tool list could not be fetched: " +
-            (err instanceof Error ? err.message : String(err)),
-          inputSchema: { type: "object", properties: {} },
-        },
-      ];
+    if (includeCms) {
+      try {
+        cmsTools = await listCmsTools(env);
+      } catch (err) {
+        // Surface CMS bridge failure as a pseudo-tool so tools/list still returns
+        // Loki's own tools rather than 500-ing the whole endpoint.
+        cmsTools = [
+          {
+            name: "__cms_unavailable",
+            description:
+              "agent-cms tool list could not be fetched: " +
+              (err instanceof Error ? err.message : String(err)),
+            inputSchema: { type: "object", properties: {} },
+          },
+        ];
+      }
     }
     return { tools: [...siteToolDefs, ...cmsTools] };
   });
@@ -103,7 +127,9 @@ function buildServer(env: Env, ctx: ExecutionContext): Server {
     const name = req.params.name;
     const args = (req.params.arguments ?? {}) as Record<string, unknown>;
 
-    const siteTool: SiteTool | undefined = SITE_TOOLS.find((t) => t.name === name);
+    const siteTool: SiteTool | undefined = availableSiteTools.find(
+      (t) => t.name === name,
+    );
     if (siteTool) {
       const parsed = z.object(siteTool.inputSchema).safeParse(args);
       if (!parsed.success) {
@@ -119,13 +145,27 @@ function buildServer(env: Env, ctx: ExecutionContext): Server {
           isError: true,
         };
       }
-      const result = await siteTool.handler(parsed.data, { env, ctx });
+      const result = await siteTool.handler(parsed.data, { env, ctx, siteId });
       return siteToolResultToMcp(result);
     }
 
-    // Destructive CMS schema ops pass the migration guard first.
+    // Non-site tools are all CMS-backed; reject them on tenant sites.
+    if (!includeCms) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Tool "${name}" is not available on this site.`,
+          },
+        ],
+        isError: true,
+      };
+    }
+
+    // Destructive CMS schema ops pass the migration guard first. CMS runs only
+    // for the default site (includeCms), so `siteId` here is the default site.
     if (GUARDED_TOOLS.has(name)) {
-      const verdict = await guardSchemaOp(name, args, env);
+      const verdict = await guardSchemaOp(name, args, env, siteId);
       if (!verdict.allowed) {
         return {
           content: [
@@ -153,10 +193,24 @@ export async function handleMcp(
   ctx: ExecutionContext,
 ): Promise<Response> {
   const token = bearerToken(request);
-  if (!env.WRITE_KEY || token !== env.WRITE_KEY) {
-    return unauthorized();
+  if (!token) return unauthorized();
+
+  // Resolve which site this key drives:
+  //  - the legacy admin WRITE_KEY -> the default site, with the full CMS toolset;
+  //  - a tenant API key -> that tenant's site, site tools only (no shared CMS).
+  let siteId: string;
+  let includeCms: boolean;
+  if (env.WRITE_KEY && token === env.WRITE_KEY) {
+    siteId = DEFAULT_SITE_ID;
+    includeCms = true;
+  } else {
+    const site = await getSiteByApiKey(env, token);
+    if (!site) return unauthorized();
+    siteId = site.id;
+    includeCms = false;
   }
-  const server = buildServer(env, ctx);
+
+  const server = buildServer(env, ctx, siteId, includeCms);
   const handler = createMcpHandler(server, {
     route: "/mcp",
     sessionIdGenerator: undefined, // stateless

@@ -11,6 +11,7 @@
 
 import { DurableObject, WorkerEntrypoint } from "cloudflare:workers";
 import type { Env } from "./env";
+import { DEFAULT_SITE_ID } from "./site/store";
 
 export class ChannelDO extends DurableObject<Env> {
   /** Accept a client WebSocket upgrade (hibernatable). */
@@ -51,14 +52,19 @@ export class ChannelDO extends DurableObject<Env> {
   }
 }
 
-export class RealtimeEntrypoint extends WorkerEntrypoint<Env> {
+export class RealtimeEntrypoint extends WorkerEntrypoint<Env, { siteId?: string }> {
   /**
    * Publish a JSON-serializable message to a channel's connected subscribers.
    * The site worker calls this from a route action / loader as
    * `await env.REALTIME.publish("guestbook", { name, message })`.
+   *
+   * Channels are namespaced per site (multi-tenant) so two sites' identically
+   * named channels never share a Durable Object — the same prefix the public
+   * `/__realtime/<channel>` WebSocket supervisor applies.
    */
   async publish(channel: string, message: unknown): Promise<void> {
-    const id = this.env.CHANNELS.idFromName(channel);
+    const siteId = this.ctx.props?.siteId ?? DEFAULT_SITE_ID;
+    const id = this.env.CHANNELS.idFromName(`${siteId}:${channel}`);
     const stub = this.env.CHANNELS.get(id);
     await stub.broadcast(message);
   }

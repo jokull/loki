@@ -185,6 +185,7 @@ export interface StoredAsset {
  */
 export async function storeAsset(
   env: Env,
+  siteId: string,
   path: string,
   bytes: Uint8Array,
   contentType: string,
@@ -197,7 +198,7 @@ export async function storeAsset(
       httpMetadata: { contentType },
     });
   }
-  await upsertAsset(env, path, hash, contentType, bytes.length);
+  await upsertAsset(env, siteId, path, hash, contentType, bytes.length);
   return {
     path,
     url: assetServingUrl(path),
@@ -220,6 +221,7 @@ export async function storeAsset(
  */
 export async function serveStaticAsset(
   env: Env,
+  siteId: string,
   request: Request,
   opts: { draft: boolean },
 ): Promise<Response | null> {
@@ -231,14 +233,14 @@ export async function serveStaticAsset(
 
   let entry: AssetManifestEntry | null = null;
   if (opts.draft) {
-    const row = await readAsset(env, assetPath);
+    const row = await readAsset(env, siteId, assetPath);
     if (row) {
       entry = { hash: row.hash, contentType: row.content_type, size: row.size };
     }
   } else {
-    const versionId = await getPublishedVersionId(env);
+    const versionId = await getPublishedVersionId(env, siteId);
     if (versionId != null) {
-      const version = await getVersion(env, versionId);
+      const version = await getVersion(env, siteId, versionId);
       if (version) entry = versionAssetManifest(version)[assetPath] ?? null;
     }
   }

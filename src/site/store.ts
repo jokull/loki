@@ -1,7 +1,15 @@
 // D1 access for the site ring: draft working tree (site_files), published
 // snapshots (site_versions), and key/value state (site_state).
+//
+// MULTI-TENANT: every row is scoped by `siteId`. One worker + one D1 hosts many
+// sites (Loftur PaaS); the legacy single-tenant site is `'__default__'`. Every
+// function here takes `siteId` and scopes its SQL to it. Version numbers are
+// per-site: `n` is what a tenant sees (v1, v2, …); the global `id` stays the PK.
 
 import type { Env } from "../env";
+
+/** The legacy single-tenant site id (pre-Loftur rows, workers.dev fallback). */
+export const DEFAULT_SITE_ID = "__default__";
 
 export interface SiteFile {
   path: string;
@@ -13,7 +21,11 @@ export interface SiteFile {
 }
 
 export interface SiteVersion {
+  /** Global autoincrement PK (internal). */
   id: number;
+  /** Per-site version number — what the tenant sees as v1, v2, … */
+  n: number;
+  site_id: string;
   created_at: string;
   message: string | null;
   bundle: string; // JSON: { [path]: compiledModule } (full, isolate-side)
@@ -72,52 +84,67 @@ export type AssetManifest = Record<string, AssetManifestEntry>;
 
 // ---- site_files (draft tree) -------------------------------------------------
 
-export async function listFiles(env: Env): Promise<SiteFile[]> {
+export async function listFiles(env: Env, siteId: string): Promise<SiteFile[]> {
   const { results } = await env.DB.prepare(
-    "SELECT path, source, compiled, client_compiled, updated_at FROM site_files ORDER BY path",
-  ).all<SiteFile>();
+    "SELECT path, source, compiled, client_compiled, updated_at FROM site_files WHERE site_id = ? ORDER BY path",
+  )
+    .bind(siteId)
+    .all<SiteFile>();
   return results ?? [];
 }
 
-export async function readFile(env: Env, path: string): Promise<SiteFile | null> {
+export async function readFile(
+  env: Env,
+  siteId: string,
+  path: string,
+): Promise<SiteFile | null> {
   return await env.DB.prepare(
-    "SELECT path, source, compiled, client_compiled, updated_at FROM site_files WHERE path = ?",
+    "SELECT path, source, compiled, client_compiled, updated_at FROM site_files WHERE site_id = ? AND path = ?",
   )
-    .bind(path)
+    .bind(siteId, path)
     .first<SiteFile>();
 }
 
 export async function writeFile(
   env: Env,
+  siteId: string,
   path: string,
   source: string,
   compiled: string | null,
   clientCompiled: string | null,
 ): Promise<void> {
   await env.DB.prepare(
-    `INSERT INTO site_files (path, source, compiled, client_compiled, updated_at)
-     VALUES (?, ?, ?, ?, datetime('now'))
-     ON CONFLICT(path) DO UPDATE SET
+    `INSERT INTO site_files (site_id, path, source, compiled, client_compiled, updated_at)
+     VALUES (?, ?, ?, ?, ?, datetime('now'))
+     ON CONFLICT(site_id, path) DO UPDATE SET
        source = excluded.source,
        compiled = excluded.compiled,
        client_compiled = excluded.client_compiled,
        updated_at = excluded.updated_at`,
   )
-    .bind(path, source, compiled, clientCompiled)
+    .bind(siteId, path, source, compiled, clientCompiled)
     .run();
 }
 
-export async function deleteFile(env: Env, path: string): Promise<boolean> {
-  const res = await env.DB.prepare("DELETE FROM site_files WHERE path = ?")
-    .bind(path)
+export async function deleteFile(
+  env: Env,
+  siteId: string,
+  path: string,
+): Promise<boolean> {
+  const res = await env.DB.prepare(
+    "DELETE FROM site_files WHERE site_id = ? AND path = ?",
+  )
+    .bind(siteId, path)
     .run();
   return (res.meta?.changes ?? 0) > 0;
 }
 
 // ---- site_versions (published snapshots) ------------------------------------
 
+/** Insert a new version for `siteId`, assigning the next per-site number `n`. */
 export async function insertVersion(
   env: Env,
+  siteId: string,
   message: string | null,
   bundle: Record<string, string>,
   footprint: unknown,
@@ -126,10 +153,14 @@ export async function insertVersion(
   deps: DepSnapshot,
   sourceBundle: Record<string, string>,
 ): Promise<number> {
-  const res = await env.DB.prepare(
-    "INSERT INTO site_versions (message, bundle, footprint, assets, client_bundle, deps, source_bundle) VALUES (?, ?, ?, ?, ?, ?, ?)",
+  const row = await env.DB.prepare(
+    `INSERT INTO site_versions (site_id, n, message, bundle, footprint, assets, client_bundle, deps, source_bundle)
+     VALUES (?, (SELECT COALESCE(MAX(n), 0) + 1 FROM site_versions WHERE site_id = ?), ?, ?, ?, ?, ?, ?, ?)
+     RETURNING n`,
   )
     .bind(
+      siteId,
+      siteId,
       message,
       JSON.stringify(bundle),
       JSON.stringify(footprint),
@@ -138,18 +169,20 @@ export async function insertVersion(
       JSON.stringify(deps),
       JSON.stringify(sourceBundle),
     )
-    .run();
-  return Number(res.meta.last_row_id);
+    .first<{ n: number }>();
+  return Number(row!.n);
 }
 
+/** Fetch a version by its per-site number `n`. */
 export async function getVersion(
   env: Env,
-  id: number,
+  siteId: string,
+  n: number,
 ): Promise<SiteVersion | null> {
   return await env.DB.prepare(
-    "SELECT id, created_at, message, bundle, footprint, assets, client_bundle, deps, source_bundle FROM site_versions WHERE id = ?",
+    "SELECT id, n, site_id, created_at, message, bundle, footprint, assets, client_bundle, deps, source_bundle FROM site_versions WHERE site_id = ? AND n = ?",
   )
-    .bind(id)
+    .bind(siteId, n)
     .first<SiteVersion>();
 }
 
@@ -181,17 +214,19 @@ export function versionDepSnapshot(version: SiteVersion): DepSnapshot {
 
 export async function getDep(
   env: Env,
+  siteId: string,
   specifier: string,
 ): Promise<SiteDep | null> {
   return await env.DB.prepare(
-    "SELECT specifier, version, entry_key, module_manifest, dep_hash, created_at FROM site_deps WHERE specifier = ?",
+    "SELECT specifier, version, entry_key, module_manifest, dep_hash, created_at FROM site_deps WHERE site_id = ? AND specifier = ?",
   )
-    .bind(specifier)
+    .bind(siteId, specifier)
     .first<SiteDep>();
 }
 
 export async function upsertDep(
   env: Env,
+  siteId: string,
   specifier: string,
   version: string,
   entryKey: string,
@@ -199,25 +234,26 @@ export async function upsertDep(
   depHash: string,
 ): Promise<void> {
   await env.DB.prepare(
-    `INSERT INTO site_deps (specifier, version, entry_key, module_manifest, dep_hash, created_at)
-     VALUES (?, ?, ?, ?, ?, datetime('now'))
-     ON CONFLICT(specifier) DO UPDATE SET
+    `INSERT INTO site_deps (site_id, specifier, version, entry_key, module_manifest, dep_hash, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+     ON CONFLICT(site_id, specifier) DO UPDATE SET
        version = excluded.version,
        entry_key = excluded.entry_key,
        module_manifest = excluded.module_manifest,
        dep_hash = excluded.dep_hash,
        created_at = excluded.created_at`,
   )
-    .bind(specifier, version, entryKey, JSON.stringify(moduleManifest), depHash)
+    .bind(siteId, specifier, version, entryKey, JSON.stringify(moduleManifest), depHash)
     .run();
 }
 
 /** The lockfile row parsed into a DepManifestEntry (or null if unresolved). */
 export async function getDepEntry(
   env: Env,
+  siteId: string,
   specifier: string,
 ): Promise<DepManifestEntry | null> {
-  const row = await getDep(env, specifier);
+  const row = await getDep(env, siteId, specifier);
   if (!row) return null;
   let manifest: Record<string, string>;
   try {
@@ -259,10 +295,13 @@ export function versionAssetManifest(version: SiteVersion): AssetManifest {
 
 export async function listVersions(
   env: Env,
+  siteId: string,
 ): Promise<Array<Omit<SiteVersion, "bundle">>> {
   const { results } = await env.DB.prepare(
-    "SELECT id, created_at, message, footprint FROM site_versions ORDER BY id DESC",
-  ).all<Omit<SiteVersion, "bundle">>();
+    "SELECT id, n, site_id, created_at, message, footprint FROM site_versions WHERE site_id = ? ORDER BY n DESC",
+  )
+    .bind(siteId)
+    .all<Omit<SiteVersion, "bundle">>();
   return results ?? [];
 }
 
@@ -292,6 +331,7 @@ export interface DraftRestoreResult {
  */
 export async function restoreDraftFromVersion(
   env: Env,
+  siteId: string,
   version: SiteVersion,
 ): Promise<DraftRestoreResult> {
   const bundle = JSON.parse(version.bundle) as Record<string, string>;
@@ -314,22 +354,26 @@ export async function restoreDraftFromVersion(
   });
 
   // Full replace in one implicit transaction: the version is the whole tree.
-  const stmts = [env.DB.prepare("DELETE FROM site_files")];
+  const stmts = [
+    env.DB.prepare("DELETE FROM site_files WHERE site_id = ?").bind(siteId),
+  ];
   for (const r of fileRows) {
     stmts.push(
       env.DB.prepare(
-        `INSERT INTO site_files (path, source, compiled, client_compiled, updated_at)
-         VALUES (?, ?, ?, ?, datetime('now'))`,
-      ).bind(r.path, r.source, r.compiled, r.clientCompiled),
+        `INSERT INTO site_files (site_id, path, source, compiled, client_compiled, updated_at)
+         VALUES (?, ?, ?, ?, ?, datetime('now'))`,
+      ).bind(siteId, r.path, r.source, r.compiled, r.clientCompiled),
     );
   }
-  stmts.push(env.DB.prepare("DELETE FROM site_assets"));
+  stmts.push(
+    env.DB.prepare("DELETE FROM site_assets WHERE site_id = ?").bind(siteId),
+  );
   for (const [path, a] of Object.entries(assets)) {
     stmts.push(
       env.DB.prepare(
-        `INSERT INTO site_assets (path, hash, content_type, size, updated_at)
-         VALUES (?, ?, ?, ?, datetime('now'))`,
-      ).bind(path, a.hash, a.contentType, a.size),
+        `INSERT INTO site_assets (site_id, path, hash, content_type, size, updated_at)
+         VALUES (?, ?, ?, ?, ?, datetime('now'))`,
+      ).bind(siteId, path, a.hash, a.contentType, a.size),
     );
   }
   await env.DB.batch(stmts);
@@ -343,54 +387,67 @@ export async function restoreDraftFromVersion(
 
 // ---- site_assets (draft asset tree) -----------------------------------------
 
-export async function listAssets(env: Env): Promise<SiteAsset[]> {
+export async function listAssets(env: Env, siteId: string): Promise<SiteAsset[]> {
   const { results } = await env.DB.prepare(
-    "SELECT path, hash, content_type, size, updated_at FROM site_assets ORDER BY path",
-  ).all<SiteAsset>();
+    "SELECT path, hash, content_type, size, updated_at FROM site_assets WHERE site_id = ? ORDER BY path",
+  )
+    .bind(siteId)
+    .all<SiteAsset>();
   return results ?? [];
 }
 
 export async function readAsset(
   env: Env,
+  siteId: string,
   path: string,
 ): Promise<SiteAsset | null> {
   return await env.DB.prepare(
-    "SELECT path, hash, content_type, size, updated_at FROM site_assets WHERE path = ?",
+    "SELECT path, hash, content_type, size, updated_at FROM site_assets WHERE site_id = ? AND path = ?",
   )
-    .bind(path)
+    .bind(siteId, path)
     .first<SiteAsset>();
 }
 
 export async function upsertAsset(
   env: Env,
+  siteId: string,
   path: string,
   hash: string,
   contentType: string,
   size: number,
 ): Promise<void> {
   await env.DB.prepare(
-    `INSERT INTO site_assets (path, hash, content_type, size, updated_at)
-     VALUES (?, ?, ?, ?, datetime('now'))
-     ON CONFLICT(path) DO UPDATE SET
+    `INSERT INTO site_assets (site_id, path, hash, content_type, size, updated_at)
+     VALUES (?, ?, ?, ?, ?, datetime('now'))
+     ON CONFLICT(site_id, path) DO UPDATE SET
        hash = excluded.hash,
        content_type = excluded.content_type,
        size = excluded.size,
        updated_at = excluded.updated_at`,
   )
-    .bind(path, hash, contentType, size)
+    .bind(siteId, path, hash, contentType, size)
     .run();
 }
 
-export async function deleteAsset(env: Env, path: string): Promise<boolean> {
-  const res = await env.DB.prepare("DELETE FROM site_assets WHERE path = ?")
-    .bind(path)
+export async function deleteAsset(
+  env: Env,
+  siteId: string,
+  path: string,
+): Promise<boolean> {
+  const res = await env.DB.prepare(
+    "DELETE FROM site_assets WHERE site_id = ? AND path = ?",
+  )
+    .bind(siteId, path)
     .run();
   return (res.meta?.changes ?? 0) > 0;
 }
 
 /** Build the draft asset manifest (path -> {hash,contentType,size}). */
-export async function buildDraftAssetManifest(env: Env): Promise<AssetManifest> {
-  const rows = await listAssets(env);
+export async function buildDraftAssetManifest(
+  env: Env,
+  siteId: string,
+): Promise<AssetManifest> {
+  const rows = await listAssets(env, siteId);
   const manifest: AssetManifest = {};
   for (const r of rows) {
     manifest[r.path] = {
@@ -404,28 +461,39 @@ export async function buildDraftAssetManifest(env: Env): Promise<AssetManifest> 
 
 // ---- site_state (key/value) --------------------------------------------------
 
-export async function getState(env: Env, key: string): Promise<string | null> {
-  const row = await env.DB.prepare("SELECT value FROM site_state WHERE key = ?")
-    .bind(key)
+export async function getState(
+  env: Env,
+  siteId: string,
+  key: string,
+): Promise<string | null> {
+  const row = await env.DB.prepare(
+    "SELECT value FROM site_state WHERE site_id = ? AND key = ?",
+  )
+    .bind(siteId, key)
     .first<{ value: string }>();
   return row?.value ?? null;
 }
 
 export async function setState(
   env: Env,
+  siteId: string,
   key: string,
   value: string,
 ): Promise<void> {
   await env.DB.prepare(
-    `INSERT INTO site_state (key, value) VALUES (?, ?)
-     ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+    `INSERT INTO site_state (site_id, key, value) VALUES (?, ?, ?)
+     ON CONFLICT(site_id, key) DO UPDATE SET value = excluded.value`,
   )
-    .bind(key, value)
+    .bind(siteId, key, value)
     .run();
 }
 
-export async function getPublishedVersionId(env: Env): Promise<number | null> {
-  const v = await getState(env, "published_version");
+/** The published version number (`n`) for this site, or null if none. */
+export async function getPublishedVersionId(
+  env: Env,
+  siteId: string,
+): Promise<number | null> {
+  const v = await getState(env, siteId, "published_version");
   if (v == null) return null;
   const n = Number(v);
   return Number.isFinite(n) ? n : null;

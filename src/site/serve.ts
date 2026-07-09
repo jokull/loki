@@ -15,6 +15,7 @@ import { serveModule, serveVendor } from "./assets";
 import { serveStaticAsset } from "./static-assets";
 import { assembleDeps, draftDepSnapshot } from "./deps";
 import {
+  DEFAULT_SITE_ID,
   getPublishedVersionId,
   getVersion,
   getState,
@@ -29,8 +30,8 @@ const PREVIEW_COOKIE = "loki_preview";
  * Build the draft bundle for the ISOLATE (server) from the live working tree.
  * Always the FULL compiled text — serverFn handlers must run server-side.
  */
-export async function buildDraftBundle(env: Env): Promise<Bundle> {
-  const files = await listFiles(env);
+export async function buildDraftBundle(env: Env, siteId: string): Promise<Bundle> {
+  const files = await listFiles(env, siteId);
   const bundle: Bundle = {};
   for (const f of files) {
     bundle[f.path] = f.compiled ?? f.source;
@@ -44,8 +45,8 @@ export async function buildDraftBundle(env: Env): Promise<Bundle> {
  * source ever reaches the client; everything else is identical to the isolate
  * text. NEVER feed this to buildWorkerCode — the isolate needs the full build.
  */
-export async function buildDraftClientBundle(env: Env): Promise<Bundle> {
-  const files = await listFiles(env);
+export async function buildDraftClientBundle(env: Env, siteId: string): Promise<Bundle> {
+  const files = await listFiles(env, siteId);
   const bundle: Bundle = {};
   for (const f of files) {
     bundle[f.path] = f.client_compiled ?? f.compiled ?? f.source;
@@ -101,6 +102,7 @@ export function parseWritableModels(bundle: Bundle): string[] {
 async function runSite(
   env: Env,
   ctx: ExecutionContext,
+  siteId: string,
   loaderId: string,
   bundle: Bundle,
   includeDrafts: boolean,
@@ -113,31 +115,41 @@ async function runSite(
   // per bundle so published/preview/rollback serve identical bytes.
   const assembled = await assembleDeps(env, deps);
   const built = buildWorkerCode(bundle, assembled);
-  const graphql = makeGraphqlBinding(ctx, includeDrafts);
   const exports = ctxExports(ctx);
   const workerEnv: Record<string, unknown> = {
     GRAPHQL_DRAFTS: includeDrafts ? "true" : "false",
     // Version-aware base for island module URLs, read by the runtime shim.
     LOKI_ISLAND_BASE: islandBase,
   };
-  if (graphql) workerEnv.GRAPHQL = graphql;
-  // Scoped record writes: RECORDS.create is gated by this tree's allowlist.
-  if (exports?.RecordsEntrypoint) {
-    workerEnv.RECORDS = exports.RecordsEntrypoint({
-      props: { allowlist: parseWritableModels(bundle) },
-    });
+  // Shared-data capabilities (agent-cms GraphQL, scoped record writes, and the
+  // shared feature DB) are wired ONLY for the legacy default site. v1 defers
+  // per-tenant content/data, so tenant isolates get NONE of these — they can't
+  // reach another site's data (or the demo's). See PLAN.md.
+  const isDefault = siteId === DEFAULT_SITE_ID;
+  if (isDefault) {
+    const graphql = makeGraphqlBinding(ctx, includeDrafts);
+    if (graphql) workerEnv.GRAPHQL = graphql;
+    // Scoped record writes: RECORDS.create is gated by this tree's allowlist.
+    if (exports?.RecordsEntrypoint) {
+      workerEnv.RECORDS = exports.RecordsEntrypoint({
+        props: { allowlist: parseWritableModels(bundle) },
+      });
+    }
+    // Feature-DB SQL capability (mediated D1): a raw D1Database can't cross the
+    // Worker-Loader env (DataCloneError), so serverFns reach FEATURES_DB via this
+    // WorkerEntrypoint's async exec() RPC — e.g. through drizzle's sqlite-proxy.
+    if (exports?.FeaturesDbEntrypoint) {
+      workerEnv.FEATURES_SQL = exports.FeaturesDbEntrypoint({});
+    }
   }
-  // Realtime fan-out: REALTIME.publish(channel, message).
+  // Realtime fan-out: REALTIME.publish(channel, message). Channels are
+  // namespaced per site, so this is safe for every tenant.
   if (exports?.RealtimeEntrypoint) {
-    workerEnv.REALTIME = exports.RealtimeEntrypoint({});
+    workerEnv.REALTIME = exports.RealtimeEntrypoint({ props: { siteId } });
   }
-  // Feature-DB SQL capability (mediated D1): a raw D1Database can't cross the
-  // Worker-Loader env (DataCloneError), so serverFns reach FEATURES_DB via this
-  // WorkerEntrypoint's async exec() RPC — e.g. through drizzle's sqlite-proxy.
-  if (exports?.FeaturesDbEntrypoint) {
-    workerEnv.FEATURES_SQL = exports.FeaturesDbEntrypoint({});
-  }
-  const stub = env.LOADER.get(loaderId, () => ({
+  // Namespace the isolate by site so two sites with byte-identical bundles never
+  // share an isolate (their capability env differs).
+  const stub = env.LOADER.get(`${siteId}:${loaderId}`, () => ({
     compatibilityDate: built.compatibilityDate,
     mainModule: built.mainModule,
     modules: built.modules,
@@ -163,18 +175,20 @@ async function runSite(
 export async function smokeRender(
   env: Env,
   ctx: ExecutionContext,
+  siteId: string,
   bundle: Bundle,
 ): Promise<Response> {
   const id = `smoke:${RUNTIME_VERSION}:${await sha256Hex(stableStringify(bundle))}:${Date.now()}`;
   return runSite(
     env,
     ctx,
+    siteId,
     id,
     bundle,
     true,
     new Request("https://loki.internal/"),
     "/__modules/draft",
-    await draftDepSnapshot(env, bundle),
+    await draftDepSnapshot(env, siteId, bundle),
   );
 }
 
@@ -202,8 +216,8 @@ interface PreviewState {
   expires: number;
 }
 
-export async function readPreviewState(env: Env): Promise<PreviewState | null> {
-  const raw = await getState(env, "preview_token");
+export async function readPreviewState(env: Env, siteId: string): Promise<PreviewState | null> {
+  const raw = await getState(env, siteId, "preview_token");
   if (!raw) return null;
   try {
     const parsed = JSON.parse(raw) as PreviewState;
@@ -216,9 +230,10 @@ export async function readPreviewState(env: Env): Promise<PreviewState | null> {
 
 export async function isValidPreviewToken(
   env: Env,
+  siteId: string,
   token: string,
 ): Promise<boolean> {
-  const state = await readPreviewState(env);
+  const state = await readPreviewState(env, siteId);
   return !!state && state.token === token;
 }
 
@@ -227,12 +242,13 @@ export async function serveDraft(
   env: Env,
   ctx: ExecutionContext,
   request: Request,
+  siteId: string,
 ): Promise<Response> {
-  const bundle = await buildDraftBundle(env);
+  const bundle = await buildDraftBundle(env, siteId);
   if (Object.keys(bundle).length === 0) return placeholder();
-  const deps = await draftDepSnapshot(env, bundle);
+  const deps = await draftDepSnapshot(env, siteId, bundle);
   const id = `draft:${RUNTIME_VERSION}:${await sha256Hex(stableStringify(bundle))}:${depFingerprint(deps)}`;
-  return runSite(env, ctx, id, bundle, true, request, "/__modules/draft", deps);
+  return runSite(env, ctx, siteId, id, bundle, true, request, "/__modules/draft", deps);
 }
 
 /** Stable fingerprint of a dep snapshot (specifier@depHash pairs). */
@@ -248,15 +264,17 @@ export async function servePublished(
   env: Env,
   ctx: ExecutionContext,
   request: Request,
+  siteId: string,
 ): Promise<Response> {
-  const versionId = await getPublishedVersionId(env);
+  const versionId = await getPublishedVersionId(env, siteId);
   if (versionId == null) return placeholder();
-  const version = await getVersion(env, versionId);
+  const version = await getVersion(env, siteId, versionId);
   if (!version) return placeholder();
   const bundle = JSON.parse(version.bundle) as Bundle;
   return runSite(
     env,
     ctx,
+    siteId,
     `site:v${versionId}:${RUNTIME_VERSION}`,
     bundle,
     false,
@@ -274,6 +292,7 @@ export async function serveSite(
   env: Env,
   ctx: ExecutionContext,
   request: Request,
+  siteId: string,
 ): Promise<Response> {
   const url = new URL(request.url);
 
@@ -286,7 +305,9 @@ export async function serveSite(
     if (request.headers.get("Upgrade") !== "websocket") {
       return new Response("Expected a WebSocket upgrade", { status: 426 });
     }
-    const id = env.CHANNELS.idFromName(channel);
+    // Namespace per site so tenants' channels never collide (matches the prefix
+    // RealtimeEntrypoint.publish applies server-side).
+    const id = env.CHANNELS.idFromName(`${siteId}:${channel}`);
     return env.CHANNELS.get(id).fetch(request);
   }
 
@@ -296,8 +317,8 @@ export async function serveSite(
   }
   if (url.pathname.startsWith("/__modules/")) {
     const cookie = getCookie(request, PREVIEW_COOKIE);
-    const previewOk = !!cookie && (await isValidPreviewToken(env, cookie));
-    return serveModule(env, url.pathname, previewOk);
+    const previewOk = !!cookie && (await isValidPreviewToken(env, siteId, cookie));
+    return serveModule(env, siteId, url.pathname, previewOk);
   }
 
   // serverFn RPC: /__fn/<scope>/<id>. The scope selects the site tree exactly
@@ -309,23 +330,23 @@ export async function serveSite(
     const scope = url.pathname.slice("/__fn/".length).split("/")[0];
     if (scope === "draft") {
       const cookie = getCookie(request, PREVIEW_COOKIE);
-      const previewOk = !!cookie && (await isValidPreviewToken(env, cookie));
+      const previewOk = !!cookie && (await isValidPreviewToken(env, siteId, cookie));
       if (!previewOk) {
         return new Response("Preview cookie required for draft server functions.", {
           status: 403,
         });
       }
-      return serveDraft(env, ctx, request);
+      return serveDraft(env, ctx, request, siteId);
     }
     if (/^v\d+$/.test(scope)) {
-      return servePublished(env, ctx, request);
+      return servePublished(env, ctx, request, siteId);
     }
     return new Response("Bad server-function scope.", { status: 400 });
   }
 
   if (url.pathname === "/__preview") {
     const token = url.searchParams.get("token") ?? "";
-    if (!(await isValidPreviewToken(env, token))) {
+    if (!(await isValidPreviewToken(env, siteId, token))) {
       return new Response("Invalid or expired preview token", { status: 403 });
     }
     const headers = new Headers({ Location: "/" });
@@ -337,17 +358,17 @@ export async function serveSite(
   }
 
   const cookie = getCookie(request, PREVIEW_COOKIE);
-  const previewOk = !!cookie && (await isValidPreviewToken(env, cookie));
+  const previewOk = !!cookie && (await isValidPreviewToken(env, siteId, cookie));
 
   // Routes take precedence over static files: dispatch to the site worker
   // first, and only fall back to a public/ static asset when it 404s. The
   // isolate is cache-warm, so the fallback costs one extra R2 lookup on a
   // genuine miss. Draft cookie -> draft manifest; otherwise published manifest.
   const response = previewOk
-    ? await serveDraft(env, ctx, request)
-    : await servePublished(env, ctx, request);
+    ? await serveDraft(env, ctx, request, siteId)
+    : await servePublished(env, ctx, request, siteId);
   if (response.status === 404) {
-    const asset = await serveStaticAsset(env, request, { draft: previewOk });
+    const asset = await serveStaticAsset(env, siteId, request, { draft: previewOk });
     if (asset) return asset;
   }
   return response;

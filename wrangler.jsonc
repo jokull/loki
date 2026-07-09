@@ -10,8 +10,8 @@
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "loki-cms",
-      "database_id": "28979086-bf7d-4a94-91f9-4ca0c5c36db2",
+      "database_name": "loftur-db",
+      "database_id": "20c00d09-bc49-4fe6-b09c-45e05131f34d",
       "migrations_dir": "migrations"
     },
     {

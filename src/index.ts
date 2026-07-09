@@ -4,6 +4,30 @@ import { getCms } from "./env";
 import { classifyRestSchemaOp, guardRestSchemaOp } from "./guard";
 import { handleMcp } from "./mcp";
 import { serveSite } from "./site/serve";
+import { handleControlPlane } from "./control";
+import { getSiteBySubdomain } from "./tenants";
+import { DEFAULT_SITE_ID } from "./site/store";
+
+/** The Loftur apex zone. Subdomains of it are tenant sites. */
+const APEX = "loftur.app";
+
+/** Resolve the effective host (with a dev override header for pre-DNS testing). */
+function effectiveHost(request: Request, url: URL): string {
+  return (
+    request.headers.get("x-loftur-host") ||
+    url.hostname ||
+    ""
+  ).toLowerCase();
+}
+
+/** Friendly 404 for an unclaimed {sub}.loftur.app. */
+function unknownSubdomain(sub: string): Response {
+  const html = `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>loftur.app</title><body style="margin:0;background:#0d1016;color:#e9edf3;font:16px/1.6 ui-sans-serif,system-ui,sans-serif;display:grid;place-items:center;min-height:100vh"><div style="max-width:32rem;padding:2rem;text-align:center"><p style="font-family:ui-monospace,Menlo,monospace;letter-spacing:.14em;text-transform:uppercase;color:#7e8896;font-size:.8rem">◆ Loftur</p><h1 style="font-family:Charter,Georgia,serif;font-size:2rem;margin:1rem 0">${sub}.loftur.app is unclaimed</h1><p style="color:#b4bdca">No site here yet. <a href="https://loftur.app" style="color:#f0752e">Claim this name →</a></p></div></body>`;
+  return new Response(html, {
+    status: 404,
+    headers: { "content-type": "text/html; charset=utf-8" },
+  });
+}
 
 export type { Env };
 
@@ -134,7 +158,9 @@ async function guardedCmsForward(
 
   const descriptor = classifyRestSchemaOp(method, url.pathname, body);
   if (descriptor) {
-    const verdict = await guardRestSchemaOp(env, descriptor);
+    // CMS REST is exposed only for the legacy default site (v1), so the guard
+    // checks that site's published footprint.
+    const verdict = await guardRestSchemaOp(env, DEFAULT_SITE_ID, descriptor);
     if (!verdict.allowed) {
       return new Response(
         JSON.stringify({
@@ -156,35 +182,56 @@ export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
     const { pathname } = url;
+    const host = effectiveHost(request, url);
 
-    // Loki's merged MCP endpoint (agent-cms's own /mcp stays internal).
+    // (1) Apex (loftur.app / www) -> the Loftur control plane (signup, keys).
+    if (host === APEX || host === `www.${APEX}`) {
+      return handleControlPlane(request, env);
+    }
+
+    // (2) Resolve the tenant. A {sub}.loftur.app host maps to a site; anything
+    // else (workers.dev, custom) is the legacy single-tenant default site.
+    let siteId = DEFAULT_SITE_ID;
+    let isTenant = false;
+    if (host.endsWith(`.${APEX}`)) {
+      const sub = host.slice(0, host.length - (`.${APEX}`).length);
+      const site = await getSiteBySubdomain(env, sub);
+      if (!site) return unknownSubdomain(sub);
+      siteId = site.id;
+      isTenant = true;
+    }
+
+    // (3) MCP endpoint. handleMcp derives the site from the bearer key
+    // (tenant API key -> that site; the legacy WRITE_KEY -> the default site).
     if (pathname === "/mcp") {
       return handleMcp(request, env, ctx);
     }
 
-    // agent-cms content-asset bytes, addressed by their R2 key (`uploads/…`).
-    if (pathname.startsWith("/uploads/")) {
-      return serveCmsUpload(request, env);
-    }
-
-    if (isCmsPath(pathname)) {
-      // Guard the destructive schema REST seam (DELETE/PATCH on models/fields)
-      // with the same expand/contract check as the MCP endpoint before
-      // forwarding to agent-cms. Non-guarded requests pass straight through.
-      if (pathname.startsWith("/api/models/")) {
-        return guardedCmsForward(request, env, url);
+    // (4) agent-cms content REST/GraphQL is exposed ONLY for the legacy default
+    // site (v1 defers per-tenant CMS). On a tenant host these paths fall through
+    // to the site worker (and 404 there if the site defines no such route).
+    if (!isTenant) {
+      // agent-cms content-asset bytes, addressed by their R2 key (`uploads/…`).
+      if (pathname.startsWith("/uploads/")) {
+        return serveCmsUpload(request, env);
       }
-      return getCms(env, url.origin).fetch(request);
+      if (isCmsPath(pathname)) {
+        // Guard the destructive schema REST seam (DELETE/PATCH on models/fields).
+        if (pathname.startsWith("/api/models/")) {
+          return guardedCmsForward(request, env, url);
+        }
+        return getCms(env, url.origin).fetch(request);
+      }
     }
 
-    // Everything else is the public site (published version, or draft in
-    // preview mode) plus the /__preview token exchange.
+    // (5) Everything else is the tenant's public site (published version, or the
+    // draft in preview mode) plus the /__preview token exchange — scoped to siteId.
     try {
-      return await serveSite(env, ctx, request);
+      return await serveSite(env, ctx, request, siteId);
     } catch (err) {
       const message =
         err instanceof Error ? (err.stack ?? err.message) : String(err);
-      return new Response(`Loki serve error:\n${message}`, {
+      return new Response(`Loftur serve error:\n${message}`, {
         status: 500,
         headers: { "content-type": "text/plain; charset=utf-8" },
       });

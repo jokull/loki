@@ -71,6 +71,7 @@ function resolveModule(bundle: Bundle, path: string): string | null {
  */
 export async function serveModule(
   env: Env,
+  siteId: string,
   pathname: string,
   previewOk: boolean,
 ): Promise<Response> {
@@ -82,7 +83,7 @@ export async function serveModule(
     if (!previewOk) return new Response("Not found", { status: 404 });
     // The CLIENT bundle: serverFn modules resolve to their synthesized stub, so
     // handler/validator source (secrets, gql, logic) never reaches the browser.
-    const bundle = await buildDraftClientBundle(env);
+    const bundle = await buildDraftClientBundle(env, siteId);
     const code = resolveModule(bundle, modPath);
     if (code == null) return new Response("Not found", { status: 404 });
     return jsResponse(code, "no-store");
@@ -90,7 +91,7 @@ export async function serveModule(
 
   const versionId = Number(scope.slice(1));
   if (!Number.isInteger(versionId)) return new Response("Not found", { status: 404 });
-  const version = await getVersion(env, versionId);
+  const version = await getVersion(env, siteId, versionId);
   if (!version) return new Response("Not found", { status: 404 });
   // Overlay the version's browser stubs over its full bundle: serverFn modules
   // serve the stub, everything else the normal compiled text. (Legacy versions
