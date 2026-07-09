@@ -17,7 +17,7 @@ import type { Env } from "../env";
 import { getCms } from "../env";
 import { buildDraftBundle, smokeRender } from "./serve";
 import { draftDepSnapshot } from "./deps";
-import { buildClientBuild } from "./transpile";
+import { buildClientBuild, isTranspilable } from "./transpile";
 import {
   buildDraftAssetManifest,
   insertVersion,
@@ -319,6 +319,23 @@ export async function publishSite(
   const config = await validateSiteConfig(env);
   if (!config.ok) {
     return { ok: false, stage: "config-validation", error: config.error };
+  }
+
+  // (b3) transpile guard: the shell can LAND a file whose TSX/TS failed to
+  // transpile (compiled === null) for filesystem fidelity; such a file must never
+  // publish. (site_write can't produce this — it rejects on transpile error — so
+  // this only trips on a shell-landed broken write.)
+  const broken = (await listFiles(env)).filter(
+    (f) => isTranspilable(f.path) && f.compiled === null,
+  );
+  if (broken.length) {
+    return {
+      ok: false,
+      stage: "transpile",
+      error:
+        `These draft files failed to transpile and must be fixed before ` +
+        `publishing:\n${broken.map((f) => `  - ${f.path}`).join("\n")}`,
+    };
   }
 
   // (c) footprint

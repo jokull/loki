@@ -711,6 +711,58 @@ Then \`publish_site\` — it snapshots the asset manifest into the version and w
   expand (add new field) -> backfill content -> publish the site using it ->
   contract (remove the old field).
 
+## Shell (edit the working tree like a repo folder)
+
+The \`shell\` tool gives you a real in-process bash over the site's WORKING TREE —
+the draft. It's the fast way to navigate and text-edit code across many files
+without round-tripping each one through site_read/site_write.
+
+Working-copy model:
+- \`shell\` edits MUTATE THE DRAFT LIVE. The draft is the persistent working copy
+  between calls — each command sees the previous command's edits.
+- \`preview_site\` renders the CURRENT draft (so a shell edit shows up on the next
+  preview load, no re-mint needed).
+- \`publish_site\` COMMITS the draft to a new immutable version.
+- \`reset_site\` DISCARDS the whole draft back to the published version (\`git
+  checkout .\`).
+
+Reads/writes:
+- READS come from the live draft: code files are their real source; binary assets
+  under \`public/\` show up as opaque EMPTY placeholders (their bytes aren't in the
+  shell — use the asset tools / site_read for those).
+- WRITES route through the SAME pipeline as site_write: a \`sed -i\` / \`echo >\` /
+  redirect on a .tsx is transpiled, gql-validated, and its imports dep-resolved.
+  \`shell\` returns \`changedFiles\` and \`warnings\` (transpile / serverFn / dependency
+  / graphql issues from those writes). A write whose TSX fails to transpile still
+  LANDS (so \`cat\` reads it back) but is flagged and BLOCKS publish_site until fixed.
+
+Supported utilities (text-processing + navigation): \`grep\`/\`rg\`/\`egrep\`,
+\`sed\`, \`awk\`, \`cut\`, \`tr\`, \`sort\`, \`uniq\`, \`nl\`, \`rev\`, \`fold\`,
+\`head\`, \`tail\`, \`wc\`, \`cat\`, \`tac\`, \`ls\`, \`find\`, \`tree\`, \`stat\`,
+\`diff\`, \`comm\`, \`paste\`, \`join\`, \`jq\`, \`yq\`, \`xan\`, \`basename\`,
+\`dirname\`, \`cp\`, \`mv\`, \`rm\`, \`mkdir\`, \`touch\`, \`ln\`, \`tee\`,
+\`xargs\`, \`echo\`, \`printf\`, \`seq\`, \`base64\`, \`md5sum\`/\`sha256sum\`,
+plus pipes, redirections (\`>\`, \`>>\`, \`2>&1\`), \`&&\`/\`||\`/\`;\`, globs,
+\`$VAR\`, and \`for\`/\`while\`/\`if\`/functions.
+
+HERMETIC — FAKE TOOLCHAIN (important): this is NOT a dev box. There is NO real
+\`git\`, \`tsc\`, \`node\`, \`npm\`, \`drizzle-kit\`, or network — text utilities
+only (\`grep\`/\`sed\`/\`awk\` yes; real binaries no). Don't try to "run" or
+"typecheck" the site here. To check types/gql, let the write pipeline +
+\`publish_site\` validate; for content use \`graphql_query\`; for record/feature-DB
+work use serverFns.
+
+Worked example — recolor an accent, preview, publish:
+
+    shell({ command: "grep -rn 'accent' styles.css" })      # locate the style
+    # -> 12:  --accent: #3b82f6;  /* brand accent */
+    shell({ command: "sed -i 's/#3b82f6/#e11d48/' styles.css" })
+    # -> changedFiles: styles.css
+    shell({ command: "grep -n e11d48 styles.css" })         # confirm it landed
+    preview_site()                                          # open the URL: new accent
+    publish_site("recolor accent to rose")                  # commit
+    # (or reset_site() to throw the change away)
+
 ## Workflow
 
 0. schema_types()                          -> read the content types before querying

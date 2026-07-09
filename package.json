@@ -15,6 +15,7 @@
     "agent-cms": "^0.4.2",
     "agents": "^0.8.6",
     "graphql": "^16.13.1",
+    "just-bash": "3.1.0",
     "preact": "^10.29.5",
     "preact-render-to-string": "^6.7.0",
     "sucrase": "^3.35.0",
