@@ -19,6 +19,7 @@ const SUITES = [
   ["roles (user.role · set_user_role · list_users)", "roles.mjs"],
   ["logs  (env.LOG · site_logs · error capture)", "logs.mjs"],
   ["uploads (env.UPLOADS · /__uploads serving)", "uploads.mjs"],
+  ["templates (scaffold_template · publish · render)", "templates.mjs"],
 ];
 
 function run(file) {

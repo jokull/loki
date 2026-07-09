@@ -34,6 +34,7 @@ import {
   validateDocuments,
 } from "./publish";
 import { getSchemaBundle } from "./schema-types";
+import { TEMPLATES, TEMPLATE_NAMES } from "./templates";
 import { runShell, resetDraft, formatShellResult } from "./shell";
 import { SITE_HELP } from "./help";
 import {
@@ -1015,6 +1016,55 @@ export const SITE_TOOLS: SiteTool[] = [
       return ok
         ? text(`Set ${email} to role "${role}". Takes effect on their next sign-in.`)
         : errorResult(`No user with email ${email} has signed in yet.`);
+    },
+  },
+  {
+    name: "scaffold_template",
+    description:
+      "Bootstrap the draft tree from a coherent starter template — a one-call way to " +
+      "begin, then customize. Templates are CMS-free and publish cleanly out of the box. " +
+      `Available: ${TEMPLATE_NAMES.map((n) => `"${n}"`).join(", ")}. ` +
+      "Writes all the template's files (overwriting matching paths), then preview_site / " +
+      "publish_site as usual. Call with no template to list options.",
+    inputSchema: {
+      template: z.string().optional().describe(`One of: ${TEMPLATE_NAMES.join(", ")}`),
+    },
+    async handler({ template }, { env, siteId }) {
+      if (!template) {
+        return text(
+          "Available templates:\n" +
+            TEMPLATE_NAMES.map((n) => `- ${n}: ${TEMPLATES[n].description}`).join("\n") +
+            "\n\nCall scaffold_template({ template: \"<name>\" }) to write one.",
+        );
+      }
+      const tpl = TEMPLATES[template];
+      if (!tpl) {
+        return errorResult(
+          `Unknown template "${template}". Available: ${TEMPLATE_NAMES.join(", ")}.`,
+        );
+      }
+      const written: string[] = [];
+      for (const [path, source] of Object.entries(tpl.files)) {
+        const result = transpileModule(path, source);
+        if (!result.ok) {
+          return errorResult(`Template file ${path} failed to transpile:\n${result.error}`);
+        }
+        const clientBuild = buildClientBuild(path, source);
+        await writeFile(
+          env,
+          siteId,
+          path,
+          source,
+          result.code ?? null,
+          clientBuild.ok ? clientBuild.clientCompiled ?? null : null,
+        );
+        written.push(path);
+      }
+      return text(
+        `Scaffolded "${template}" — wrote ${written.length} files:\n` +
+          written.map((p) => `  ${p}`).join("\n") +
+          `\n\n${tpl.description}\n\nNext: preview_site() to see it, then publish_site().`,
+      );
     },
   },
   {
