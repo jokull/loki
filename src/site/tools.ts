@@ -908,6 +908,57 @@ export const SITE_TOOLS: SiteTool[] = [
     },
   },
   {
+    name: "site_status",
+    description:
+      "One-call health snapshot of this site: published version, whether the draft " +
+      "differs from it, feature-DB tables, content models, secrets set (names), " +
+      "signed-in user count, and recent error count. Read this to orient before " +
+      "debugging or to confirm a publish landed.",
+    inputSchema: {},
+    async handler(_args, { env, siteId }) {
+      const publishedId = await getPublishedVersionId(env, siteId);
+      const draft = await buildDraftBundle(env, siteId);
+      let changed = 0;
+      let published: Bundle = {};
+      if (publishedId != null) {
+        const v = await getVersion(env, siteId, publishedId);
+        if (v) published = JSON.parse(v.bundle) as Bundle;
+      }
+      const paths = new Set([...Object.keys(draft), ...Object.keys(published)]);
+      for (const p of paths) if (draft[p] !== published[p]) changed++;
+
+      const status: Record<string, unknown> = {
+        publishedVersion: publishedId ?? null,
+        draftDiffersFromPublished: changed > 0,
+        changedPaths: changed,
+      };
+      // Content models (per-site).
+      try {
+        const intro = await cmsExecuteFor(
+          env, siteId, "{ __schema { queryType { name } } }", {}, false,
+        );
+        status.contentApi = (intro as any)?.data ? "ok" : "unavailable";
+      } catch { status.contentApi = "unavailable"; }
+      // Tenant-only: feature schema, secrets, users, recent errors.
+      if (siteId !== DEFAULT_SITE_ID) {
+        try {
+          const { schema } = JSON.parse(await featureStub(env, siteId).schema());
+          status.featureTables = Object.keys(schema);
+        } catch { status.featureTables = []; }
+        status.secrets = (await listSecretNames(env, siteId)).map((s) => s.name);
+        try {
+          const users = await featureStub(env, siteId).listUsers();
+          status.users = users.length;
+        } catch { status.users = 0; }
+        try {
+          const logs = await featureStub(env, siteId).readLogs(100);
+          status.recentErrors = logs.filter((l) => l.level === "error").length;
+        } catch { status.recentErrors = 0; }
+      }
+      return jsonText(status);
+    },
+  },
+  {
     name: "site_logs",
     description:
       "Show this site's recent runtime logs (newest first) — render/serverFn errors " +
