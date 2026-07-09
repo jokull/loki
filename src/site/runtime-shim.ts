@@ -250,6 +250,18 @@ export function connectChannel() {
 // EXPLICITLY and never reads this.
 let __requestEnv = null;
 
+// Ambient per-request signed-in user (or null), resolved by the SUPERVISOR from
+// the session cookie and injected as the trusted \`x-loki-user\` request header
+// (the isolate never verifies signatures). Set immediately before dispatch, like
+// __requestEnv, so a single synchronous render can't interleave with another's.
+let __requestUser = null;
+
+function __readUser(request) {
+  var h = request && request.headers && request.headers.get("x-loki-user");
+  if (!h) return null;
+  try { return JSON.parse(h); } catch (e) { return null; }
+}
+
 // id -> serverFn, populated at module-eval time by the transpile epilogue.
 const __serverFns = Object.create(null);
 
@@ -265,7 +277,7 @@ export function serverFn(config) {
     if (typeof handle !== "function") {
       throw new Error("serverFn: .handler() was never set" + (id ? " for " + id : ""));
     }
-    return handle({ data, env: __requestEnv, request: null });
+    return handle({ data, env: __requestEnv, request: null, user: __requestUser });
   };
   fn.__isLokiServerFn = true;
   fn.__lokiMethod = method;
@@ -274,7 +286,7 @@ export function serverFn(config) {
   fn.__lokiSetId = function (v) { id = v; fn.__lokiId = v; __serverFns[v] = fn; };
   // Dispatch used by the RPC endpoint: distinguishes validator (400) from handler
   // (500) failures and threads env EXPLICITLY (never the ambient global).
-  fn.__lokiDispatch = async function (input, request, env) {
+  fn.__lokiDispatch = async function (input, request, env, user) {
     let data;
     try {
       data = await validate(input);
@@ -285,7 +297,7 @@ export function serverFn(config) {
       return { status: 500, error: "Server function is not fully defined." };
     }
     try {
-      const result = await handle({ data, env, request });
+      const result = await handle({ data, env, request, user });
       return { status: 200, result: result };
     } catch (e) {
       console.error("[loki serverFn] handler threw for " + (id || "?"), e);
@@ -308,6 +320,7 @@ function __fnJson(status, obj) {
 // throw (logged; generic message to the client).
 export async function handleServerFn(request, env) {
   __requestEnv = env;
+  __requestUser = __readUser(request);
   const url = new URL(request.url);
   const m = url.pathname.match(/^\/__fn\/(?:v\d+|draft)\/(.+)$/);
   if (!m) return __fnJson(404, { error: "Not a server-function route." });
@@ -328,7 +341,7 @@ export async function handleServerFn(request, env) {
     catch (e) { return __fnJson(400, { error: "Invalid JSON body." }); }
     input = body ? body.data : undefined;
   }
-  const out = await fn.__lokiDispatch(input, request, env);
+  const out = await fn.__lokiDispatch(input, request, env, __requestUser);
   if (out.status === 200) {
     return __fnJson(200, out.result === undefined ? null : out.result);
   }
@@ -610,8 +623,10 @@ function normalizeActionResult(result) {
  * config = { routes, styles, islands, vendorBase, islandBase }.
  */
 export async function handleRequest(request, env, ctx, config) {
-  // Ambient env for direct (in-isolate) serverFn calls made from a loader.
+  // Ambient env + user for direct (in-isolate) serverFn calls made from a loader.
   __requestEnv = env;
+  const user = __readUser(request);
+  __requestUser = user;
   const url = new URL(request.url);
 
   if (url.pathname === "/styles.css") {
@@ -644,7 +659,7 @@ export async function handleRequest(request, env, ctx, config) {
         headers: { allow: "GET, HEAD", "content-type": "text/plain; charset=utf-8" },
       });
     }
-    const result = await mod.action({ request, env, params: matched.params });
+    const result = await mod.action({ request, env, params: matched.params, user });
     return normalizeActionResult(result);
   }
 
@@ -660,7 +675,7 @@ export async function handleRequest(request, env, ctx, config) {
 
   let props = {};
   if (typeof mod.loader === "function") {
-    const loaded = await mod.loader({ env, params: matched.params, request });
+    const loaded = await mod.loader({ env, params: matched.params, request, user });
     if (loaded && typeof loaded === "object") props = loaded;
   }
 

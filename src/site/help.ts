@@ -19,7 +19,8 @@ publish an immutable version. Content comes from the CMS via GraphQL.
 ## Route module shape
 
 Each route module default-exports a Preact component. Optionally export:
-- \`loader({ env, params, request })\` -> returns props (may be async; runs on the server).
+- \`loader({ env, params, request, user })\` -> returns props (may be async; runs on the server).
+  \`user\` is the signed-in end user (\`{ id, email }\`) or \`null\` — see "User auth" below.
 - \`head\` -> an object \`{ title, meta: [...], links: [{rel, href}] }\`, or a
   function \`(props) => head\`. Each \`meta\` item is EITHER \`{ name, content }\`
   (standard meta) OR \`{ property, content }\` (Open-Graph / Facebook — e.g.
@@ -48,10 +49,12 @@ head (object or \`(props) => head\`) and is merged UNDER every page:
 
 A route that sets its own \`head\` still works: it keeps the global favicon while
 overriding \`title\` and any tag it re-declares (e.g. a page-specific \`og:image\`).
-- \`action({ request, env, params })\` -> handles NON-GET requests to this route
-  (POST/PUT/PATCH/DELETE) — see "Route actions" below.
+- \`action({ request, env, params, user })\` -> handles NON-GET requests to this route
+  (POST/PUT/PATCH/DELETE) — see "Route actions" below. \`user\` is the signed-in
+  end user or \`null\`.
 
-The component receives \`{ ...loaderProps, params }\`.
+The component receives \`{ ...loaderProps, params }\`. To show who is signed in,
+read \`user\` in the loader and pass it into props.
 
 ## Route actions (form handling & writes)
 
@@ -123,10 +126,13 @@ from BOTH a loader (server) and an island (browser):
 - \`.validator(fn)\`: transforms/validates the RAW input into the typed \`data\` your
   handler receives. If it throws, the RPC call returns \`400\` with the thrown
   message. Optional (defaults to identity). Its return TYPE is your \`data\` type.
-- \`.handler({ data, env, request })\`: runs IN THE ISOLATE. \`env\` is the site's
-  narrow capability env — the SAME one a loader/render gets: \`env.GRAPHQL\`,
-  \`env.RECORDS\`, \`env.REALTIME\`. There is NO raw DB, NO loader, NO outbound fetch.
-  The return value is JSON-serialized to callers; annotate it (e.g. via
+- \`.handler({ data, env, request, user })\`: runs IN THE ISOLATE. \`env\` is the
+  site's narrow capability env — the SAME one a loader/render gets: \`env.GRAPHQL\`,
+  \`env.RECORDS\`, \`env.REALTIME\`, \`env.FEATURES_SQL\`, \`env.SECRETS\` (read stored API
+  keys), \`env.AUTH\` (send magic-link sign-ins), plus MEDIATED outbound \`fetch()\` to
+  external hosts. There is NO raw DB and NO Worker Loader. \`user\` is the signed-in
+  end user (\`{ id, email }\`) or \`null\`. The return value is JSON-serialized to
+  callers; annotate it (e.g. via
   \`import type { X } from "loki/schema"\`) so its type flows to the caller.
 - \`method\`: \`"GET"\` or \`"POST"\` (POST is the default for the browser stub). It ONLY
   affects the browser-RPC TRANSPORT: a GET stub encodes the input as
@@ -187,10 +193,14 @@ Responses: \`200\` with the JSON result, \`400\` on a validator throw / bad inpu
 
 A serverFn runs SANDBOXED in the site isolate with EXACTLY the capabilities a
 route loader has — \`env.GRAPHQL\` (read), \`env.RECORDS.create\` (gated by
-loki.config.json \`writableModels\`), \`env.REALTIME.publish\` — and nothing else. It
-cannot reach D1, the Worker Loader, or the network directly, and \`env.RECORDS\`
+loki.config.json \`writableModels\`), \`env.REALTIME.publish\`, \`env.FEATURES_SQL\`,
+\`env.SECRETS.get\`, \`env.AUTH\`, and MEDIATED outbound \`fetch()\` (proxied + logged by
+the platform). It cannot reach D1 or the Worker Loader directly, and \`env.RECORDS\`
 rejects any model not in your allowlist exactly as it does from a loader. Writing
 a serverFn does NOT escalate privileges beyond what your page code already has.
+Outbound fetch goes through the platform (a per-site seam for future allowlists /
+rate limits) — treat third-party calls as you would anywhere: put keys in
+\`env.SECRETS\`, never in client-imported modules.
 
 Your handler and validator SOURCE does NOT ship to the browser. The browser build
 of a serverFn module is a synthesized stub — for each serverFn just
@@ -253,6 +263,107 @@ Push live updates to connected browsers over WebSockets.
   \`{ close }\` for cleanup. It THROWS if called during SSR — call it in a
   \`useEffect\`.
 
+## Secrets (env.SECRETS) — API keys for your server code
+
+Store third-party API keys (Stripe, OpenAI, a webhook signing secret) as
+encrypted per-site secrets — NEVER hardcode them in a module. The site OWNER sets
+them with the \`set_secret\` MCP tool (\`list_secrets\` / \`delete_secret\` to manage);
+your server code reads them:
+
+    // inside a serverFn handler or a route loader (server-side only):
+    const key = await env.SECRETS.get("STRIPE_SECRET_KEY"); // string | null
+    const names = await env.SECRETS.names();                // which are set
+
+- Values are AES-GCM encrypted at rest and decrypt supervisor-side; the plaintext
+  is handed only to YOUR site's own server code (never the browser, never another
+  tenant). \`env.SECRETS\` exists only server-side (serverFn/loader/action).
+- Secrets are NOT part of a version — they persist across publish/rollback and are
+  shared by the draft and published isolates. Name them env-var style
+  (\`STRIPE_SECRET_KEY\`).
+- To wire a key: tell the owner to run \`set_secret({ name, value })\`, then read it
+  with \`env.SECRETS.get(name)\`. If \`get\` returns \`null\`, the secret isn't set yet.
+
+## Outbound HTTP (fetch external APIs)
+
+Your server code CAN call external HTTP(S) APIs with the normal \`fetch()\` — from a
+serverFn handler or a route loader/action. Every outbound request is proxied and
+logged by the platform (a seam for future per-site allowlists / rate limits); no
+config needed to start. Combine with \`env.SECRETS\`:
+
+    export const charge = serverFn({ method: "POST" })
+      .validator((i: any) => ({ amount: Number(i?.amount) | 0 }))
+      .handler(async ({ data, env }) => {
+        const key = await env.SECRETS.get("STRIPE_SECRET_KEY");
+        if (!key) throw new Error("STRIPE_SECRET_KEY not set");
+        const res = await fetch("https://api.stripe.com/v1/payment_intents", {
+          method: "POST",
+          headers: { authorization: "Bearer " + key,
+                     "content-type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({ amount: String(data.amount), currency: "usd" }),
+        });
+        return res.json();
+      });
+
+Only HTTP(S) via \`fetch\` is mediated — raw TCP sockets are not available. Outbound
+fetch is server-only; the browser build never makes these calls.
+
+## User auth (passwordless email sign-in)
+
+Loki has built-in passwordless auth for your site's END USERS (your visitors — NOT
+the owner/editor MCP tokens). It's magic-link email: the user enters their email,
+gets a one-time link, clicks it, and is signed in via a secure HttpOnly cookie. No
+passwords, no schema work, no config — it's always on.
+
+**Reading the signed-in user.** Every loader / action / serverFn receives \`user\`:
+\`{ id, email }\` when signed in, or \`null\`. Gate content on it:
+
+    // routes/members.tsx — a members-only page
+    export async function loader({ user }) {
+      if (!user) return { redirect: "/login" };   // or render a signed-out view
+      return { user };
+    }
+    export default function Members({ user }) {
+      return <main><h1>Welcome, {user.email}</h1></main>;
+    }
+
+(To hard-redirect from a loader, return a value your component acts on, or do the
+gate in an \`action\`/\`serverFn\` that returns \`{ redirect }\`. A loader's return is
+props — it does not itself redirect; branch in the component, or guard writes in a
+serverFn where you can \`throw\`.)
+
+**Sending the sign-in link.** Call \`env.AUTH.requestMagicLink(email, redirectTo?)\`
+from a serverFn or action. It emails the user a link that returns them to
+\`redirectTo\` (a same-origin path, default \`/\`) signed in:
+
+    // functions/auth.ts
+    import { serverFn } from "loki/runtime";
+    export const login = serverFn({ method: "POST" })
+      .validator((i: any) => ({ email: String(i?.email || "").trim() }))
+      .handler(async ({ data, env }) => {
+        const r = await env.AUTH.requestMagicLink(data.email, "/members");
+        if (!r.ok) throw new Error(r.error || "Could not send link");
+        return { sent: true };        // tell the UI to say "check your email"
+      });
+
+**Signing out.** Link to \`/__auth/logout\` (optionally \`?redirect=/\`) — it clears
+the session cookie and redirects. No code needed.
+
+**How it works (so you don't reinvent it).**
+- \`env.AUTH.requestMagicLink\` signs a short-lived (15 min) token and emails a
+  \`/__auth/verify?token=...\` link (via Cloudflare Email, from a loftur.app address).
+- Clicking it verifies the token, records the user, and sets an HttpOnly, Secure,
+  \`SameSite=Lax\` session cookie (\`loki_session\`, 30 days). The session is a signed
+  stateless token — the signing key stays on the platform; your code can't forge
+  it and never sees it. You only ever read the already-verified \`user\`.
+- Users are recorded per-site; you don't manage a users table. To attach a PROFILE
+  (name, avatar, plan), key a feature-DB row by \`user.id\` (see "Feature database").
+- \`user\` is delivered to your code as a trusted request header the platform sets
+  after verifying the cookie — do NOT trust any client-sent user data; use \`user\`.
+
+Build a login page with a form that calls \`login\` (island → serverFn RPC, or a
+route \`action\`), then a members area whose loader checks \`user\`. That's the whole
+pattern.
+
 ## Package dependencies (npm imports — no install, no bundler, no allowlist)
 
 You can \`import\` from ANY real npm package — there is no curated list. There is
@@ -283,8 +394,10 @@ write-time gql validation) with a specific reason:
   rejected with its file/byte count.
 
 Other constraints on what a dep can DO once loaded:
-- No outbound network from the isolate regardless — a package that phones home
-  won't work at runtime even if it loads.
+- Outbound network IS available (server-side), but MEDIATED: a package's \`fetch()\`
+  to an external host is proxied + logged by the platform. So an SDK that calls an
+  HTTP API (Stripe, etc.) works from a serverFn/loader; give it its key via
+  \`env.SECRETS\`. (Raw TCP / non-HTTP sockets are still not available.)
 - Deps imported inside a serverFn module are SERVER-ONLY: serverFn modules are
   stubbed in the browser build, so the dependency code is NEVER shipped to the
   client. (This is exactly why the feature-DB \`drizzle\` import below is
@@ -386,11 +499,11 @@ correctly with no manual plumbing.
 - Relative imports between your own files must include the extension, e.g.
   \`import { Layout } from "./components/layout.tsx"\`.
 
-Do NOT rely on arbitrary network access, \`process\`, or Node built-ins — the site
-runs in an isolated worker (no \`nodejs_compat\`) whose only capabilities are the
-\`env\` bindings (GRAPHQL / RECORDS / REALTIME / FEATURES_SQL, the last reached via
-\`featuresDriver\`). Imported npm packages must be pure-ESM + workerd-compatible for
-the same reason (see "Package dependencies").
+Do NOT rely on \`process\` or Node built-ins — the site runs in an isolated worker
+(no \`nodejs_compat\`) whose capabilities are the \`env\` bindings (GRAPHQL / RECORDS /
+REALTIME / FEATURES_SQL via \`featuresDriver\`, SECRETS, AUTH) plus MEDIATED outbound
+\`fetch()\`. Imported npm packages must be pure-ESM + workerd-compatible (see
+"Package dependencies").
 
 ## Typed content (schema_types + loki/schema)
 

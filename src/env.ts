@@ -36,6 +36,26 @@ export interface Env {
    */
   ASSETS: R2Bucket;
   WRITE_KEY?: string;
+  /**
+   * Master secret for the per-site secret store (AES-GCM) and passwordless-auth
+   * signing keys (HMAC). All per-site keys are HKDF-derived from this; it never
+   * leaves the supervisor. Set with `wrangler secret put SECRETS_KEY`.
+   */
+  SECRETS_KEY?: string;
+  /**
+   * Cloudflare Email Service send binding (`send_email`, name EMAIL). Used
+   * supervisor-side to deliver magic-link sign-in emails. Sends from a
+   * loftur.app address (the sender domain onboarded for Email Sending).
+   */
+  EMAIL?: {
+    send(message: {
+      to: string;
+      from: string | { email: string; name?: string };
+      subject: string;
+      html?: string;
+      text?: string;
+    }): Promise<{ messageId?: string }>;
+  };
   ENVIRONMENT?: "production" | "development";
 }
 

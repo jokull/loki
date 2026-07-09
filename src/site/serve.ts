@@ -13,6 +13,7 @@ import type { Env } from "../env";
 import { buildWorkerCode, RUNTIME_VERSION, type Bundle } from "./bundle";
 import { serveModule, serveVendor } from "./assets";
 import { serveStaticAsset } from "./static-assets";
+import { resolveUser, handleAuthRoute } from "../auth";
 import { assembleDeps, draftDepSnapshot } from "./deps";
 import {
   DEFAULT_SITE_ID,
@@ -154,6 +155,22 @@ async function runSite(
   if (exports?.RealtimeEntrypoint) {
     workerEnv.REALTIME = exports.RealtimeEntrypoint({ props: { siteId } });
   }
+  // Per-site encrypted secrets: env.SECRETS.get("STRIPE_KEY"). Values decrypt
+  // supervisor-side; only this site's rows are reachable (siteId in props).
+  if (exports?.SecretsEntrypoint) {
+    workerEnv.SECRETS = exports.SecretsEntrypoint({ props: { siteId } });
+  }
+  // Passwordless auth: env.AUTH.requestMagicLink(email, redirectTo). Session
+  // verification stays supervisor-side (below); the isolate only triggers sends.
+  if (exports?.AuthEntrypoint) {
+    workerEnv.AUTH = exports.AuthEntrypoint({ props: { siteId } });
+  }
+  // Mediated outbound: any external fetch() the site makes is proxied + logged
+  // through OutboundEntrypoint (per-site policy seam). Falls back to no network
+  // if the entrypoint is somehow unavailable.
+  const outbound = exports?.OutboundEntrypoint
+    ? (exports.OutboundEntrypoint({ props: { siteId } }) as Fetcher)
+    : null;
   // Namespace the isolate by site so two sites with byte-identical bundles never
   // share an isolate (their capability env differs).
   const stub = env.LOADER.get(`${siteId}:${loaderId}`, () => ({
@@ -161,10 +178,19 @@ async function runSite(
     mainModule: built.mainModule,
     modules: built.modules,
     env: workerEnv,
-    globalOutbound: null,
+    globalOutbound: outbound,
   }));
+  // Resolve the signed-in user (session cookie) HERE, supervisor-side, and inject
+  // it as a TRUSTED header. All isolate traffic (pages + serverFn RPC) flows
+  // through this path, and we strip any client-supplied x-loki-user first, so the
+  // isolate can trust it. The HMAC key never enters the isolate.
+  const user = await resolveUser(env, siteId, request);
+  const fwdHeaders = new Headers(request.headers);
+  fwdHeaders.delete("x-loki-user");
+  if (user) fwdHeaders.set("x-loki-user", JSON.stringify(user));
+  const forwarded = new Request(request, { headers: fwdHeaders });
   try {
-    return await stub.getEntrypoint().fetch(request);
+    return await stub.getEntrypoint().fetch(forwarded);
   } catch (err) {
     const message = err instanceof Error ? (err.stack ?? err.message) : String(err);
     return new Response(
@@ -302,6 +328,14 @@ export async function serveSite(
   siteId: string,
 ): Promise<Response> {
   const url = new URL(request.url);
+
+  // Passwordless auth: /__auth/verify (magic-link exchange -> session cookie) and
+  // /__auth/logout. Handled supervisor-side (holds the HMAC key) before any
+  // isolate dispatch; returns null for other paths.
+  if (url.pathname.startsWith("/__auth/")) {
+    const authResponse = await handleAuthRoute(env, request, siteId, url);
+    if (authResponse) return authResponse;
+  }
 
   // Realtime channel WebSocket supervisor: /__realtime/<channel> -> ChannelDO.
   if (url.pathname.startsWith("/__realtime/")) {

@@ -36,6 +36,12 @@
       "bucket_name": "loki-assets"
     }
   ],
+  "send_email": [
+    {
+      "name": "EMAIL",
+      "remote": true
+    }
+  ],
   "durable_objects": {
     "bindings": [
       {

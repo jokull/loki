@@ -41,6 +41,12 @@ import {
   listSiteTokens,
   revokeSiteToken,
 } from "../tenants";
+import {
+  setSecret,
+  listSecretNames,
+  deleteSecret,
+  validateSecretName,
+} from "../secrets";
 import type { Bundle } from "./bundle";
 import {
   assetServingUrl,
@@ -843,6 +849,61 @@ export const SITE_TOOLS: SiteTool[] = [
     async handler({ id }, { env, siteId }) {
       const ok = await revokeSiteToken(env, siteId, id);
       return ok ? text(`Revoked editor token ${id}.`) : errorResult(`No such editor token: ${id}`);
+    },
+  },
+  {
+    name: "set_secret",
+    description:
+      "Store an encrypted secret for this site (owner only). Use for third-party " +
+      "API keys your server code needs — Stripe, Resend, OpenAI, a webhook signing " +
+      "secret, etc. Your serverFns/loaders read it with `await env.SECRETS.get(\"NAME\")` " +
+      "(server-side only — it is NEVER in the browser build). Values are AES-GCM " +
+      "encrypted at rest under a per-site key; only the NAME is ever shown back. " +
+      "Setting an existing name overwrites it. Name must look like an env var " +
+      "(e.g. STRIPE_SECRET_KEY). Secrets are NOT part of a version — they persist " +
+      "across publish/rollback and are shared by draft and published isolates.",
+    inputSchema: {
+      name: z.string().describe("Secret name, env-var style, e.g. STRIPE_SECRET_KEY"),
+      value: z.string().describe("The secret value to encrypt and store"),
+    },
+    async handler({ name, value }, { env, siteId }) {
+      const nameErr = validateSecretName(name);
+      if (nameErr) return errorResult(nameErr);
+      if (typeof value !== "string" || value.length === 0) {
+        return errorResult("value must be a non-empty string.");
+      }
+      await setSecret(env, siteId, name, value);
+      return text(
+        `Stored secret "${name}" (encrypted). Read it in server code with ` +
+          `\`await env.SECRETS.get("${name}")\`. It is never exposed to the browser.`,
+      );
+    },
+  },
+  {
+    name: "list_secrets",
+    description:
+      "List this site's secret NAMES (never the values) with when each was set. " +
+      "Owner only.",
+    inputSchema: {},
+    async handler(_args, { env, siteId }) {
+      const secrets = await listSecretNames(env, siteId);
+      if (secrets.length === 0) {
+        return text("No secrets set. Add one with set_secret.");
+      }
+      return text(
+        secrets
+          .map((s) => `${s.name}  (set ${s.created_at}, updated ${s.updated_at})`)
+          .join("\n"),
+      );
+    },
+  },
+  {
+    name: "delete_secret",
+    description: "Delete a secret by name (owner only).",
+    inputSchema: { name: z.string().describe("The secret name to delete") },
+    async handler({ name }, { env, siteId }) {
+      const ok = await deleteSecret(env, siteId, name);
+      return ok ? text(`Deleted secret "${name}".`) : errorResult(`No such secret: ${name}`);
     },
   },
   {

@@ -330,10 +330,33 @@ export class TenantFeatureDB extends DurableObject<Env> {
     return JSON.stringify({ schema: this.schemaObject() });
   }
 
+  /**
+   * Upsert an end-user by email into `_auth_users` (created on demand) and return
+   * its id — the existing row's id if the email is already known, else `newId`.
+   * Backs passwordless auth (see src/auth.ts); the `_auth_` prefix keeps it out
+   * of the agent-visible feature schema.
+   */
+  async authUpsertUser(email: string, newId: string): Promise<string> {
+    this.sqlStore.exec(
+      "CREATE TABLE IF NOT EXISTS _auth_users (" +
+        "id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, " +
+        "created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+    );
+    this.sqlStore.exec(
+      "INSERT OR IGNORE INTO _auth_users (id, email) VALUES (?, ?)",
+      newId,
+      email,
+    );
+    const rows = this.sqlStore
+      .exec("SELECT id FROM _auth_users WHERE email = ?", email)
+      .toArray();
+    return (rows[0] as any)?.id ?? newId;
+  }
+
   private schemaObject(): FeatureSchema {
     const tables = this.sqlStore
       .exec(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name != '_migrations' ORDER BY name",
+        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_auth_%' AND name != '_migrations' ORDER BY name",
       )
       .toArray()
       .map((r: any) => r.name as string);

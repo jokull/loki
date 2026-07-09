@@ -6,6 +6,7 @@ import { handleMcp } from "./mcp";
 import { serveSite } from "./site/serve";
 import { handleControlPlane } from "./control";
 import { getSiteBySubdomain } from "./tenants";
+import { buildMagicLink, normalizeEmail } from "./auth";
 import { DEFAULT_SITE_ID } from "./site/store";
 import { cmsExecuteFor } from "./cms-dispatch";
 
@@ -39,6 +40,9 @@ export { ChannelDO, RealtimeEntrypoint } from "./realtime";
 export { RecordsEntrypoint } from "./records";
 export { FeaturesDbEntrypoint, TenantFeaturesEntrypoint } from "./features-db";
 export { TenantDB, TenantFeatureDB } from "./tenant-db";
+export { SecretsEntrypoint } from "./secrets";
+export { OutboundEntrypoint } from "./outbound";
+export { AuthEntrypoint } from "./auth";
 
 /**
  * Loopback GraphQL entrypoint for the dynamic site worker.
@@ -228,6 +232,29 @@ export default {
           { status: 500 },
         );
       }
+    }
+
+    // (0b) Admin-only magic-link minter (WRITE_KEY): returns a valid
+    // /__auth/verify URL for a site+email WITHOUT sending an email — so an
+    // automated/blind test can drive the passwordless flow end-to-end without a
+    // real inbox. Not reachable without the admin key. Body: { sub, email }.
+    if (pathname === "/__authmagic") {
+      const token = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
+      if (!env.WRITE_KEY || token !== env.WRITE_KEY) {
+        return new Response("Unauthorized", { status: 401 });
+      }
+      let body: { sub?: string; email?: string; redirectTo?: string };
+      try {
+        body = (await request.json()) as typeof body;
+      } catch {
+        return Response.json({ error: "Invalid JSON body" }, { status: 400 });
+      }
+      const email = normalizeEmail(body.email);
+      if (!email) return Response.json({ error: "Invalid email" }, { status: 400 });
+      const site = body.sub ? await getSiteBySubdomain(env, body.sub) : null;
+      if (!site) return Response.json({ error: "Unknown site" }, { status: 404 });
+      const link = await buildMagicLink(env, site.id, email, body.redirectTo ?? "/");
+      return Response.json({ siteId: site.id, email, link });
     }
 
     // (1) Apex (loftur.app / www) -> the Loftur control plane (signup, keys).
