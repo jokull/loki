@@ -22,7 +22,9 @@ export type Bundle = Record<string, string>;
 export const RUNTIME_VERSION = "r13";
 
 const ENTRY_NAME = "__loki_entry.js";
-const COMPAT_DATE = "2026-07-01";
+// Exported so the dep test-load probe (deps.ts) links its throwaway isolate on
+// the same compat date the real site isolate uses.
+export const COMPAT_DATE = "2026-07-01";
 
 // workerd resolves import specifiers URL-relative to the importing module AND
 // rejects module-map keys with a leading "/". So we key the shared runtime
