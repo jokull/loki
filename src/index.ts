@@ -12,6 +12,7 @@ export type { Env };
 // wrangler can bind the Durable Object class by name.
 export { ChannelDO, RealtimeEntrypoint } from "./realtime";
 export { RecordsEntrypoint } from "./records";
+export { FeaturesDbEntrypoint } from "./features-db";
 
 /**
  * Loopback GraphQL entrypoint for the dynamic site worker.

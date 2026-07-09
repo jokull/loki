@@ -2,6 +2,15 @@ import { createCMSHandler } from "agent-cms";
 
 export interface Env {
   DB: D1Database;
+  /**
+   * Feature database for agent-authored serverFns (the npm-dependency spike).
+   * Held ONLY by the supervisor + FeaturesDbEntrypoint — never passed into a
+   * site isolate directly (a raw D1Database is not structured-cloneable and
+   * throws `DataCloneError` when placed on a Worker Loader `env`). The site
+   * isolate reaches it exclusively through the `FEATURES_SQL` service binding
+   * (see src/features-db.ts) via drizzle's sqlite-proxy async driver.
+   */
+  FEATURES_DB: D1Database;
   LOADER: WorkerLoader;
   /** Durable Object namespace backing realtime channels (see src/realtime.ts). */
   CHANNELS: DurableObjectNamespace<import("./realtime").ChannelDO>;
