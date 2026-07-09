@@ -86,6 +86,23 @@ export function clearAccountCookie(): string {
   return `${ACCOUNT_COOKIE}=; HttpOnly; Secure; Path=/; SameSite=Lax; Max-Age=0`;
 }
 
+/** Cookie Max-Age (seconds) for framework `setCookie(name, value, opts)` callers. */
+export const ACCOUNT_MAXAGE_SEC = SESSION_TTL_SEC;
+
+/** Sign just the session token value (for setCookie(name, value, opts)). */
+export async function signAccountSessionToken(
+  env: AccountEnv,
+  email: string,
+): Promise<string> {
+  const payload: SessionPayload = { email, exp: Date.now() + SESSION_TTL_SEC * 1000 };
+  return signToken(
+    env.SECRETS_KEY,
+    ACCOUNT_SCOPE,
+    "session",
+    payload as unknown as Record<string, unknown>,
+  );
+}
+
 /** Resolve the signed-in account from a Cookie header (or null). */
 export async function resolveAccount(
   env: AccountEnv,

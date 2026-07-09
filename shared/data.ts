@@ -10,9 +10,22 @@
 
 import { sealSecret, openSecret } from "./crypto";
 
+// Minimal structural D1 surface, so this module depends on neither
+// @cloudflare/workers-types (loki) nor DOM lib (web) — a real D1Database
+// satisfies it. Only the slice of the D1 API we actually use.
+export interface D1StmtLike {
+  bind(...values: unknown[]): D1StmtLike;
+  first<T = Record<string, unknown>>(colName?: string): Promise<T | null>;
+  all<T = Record<string, unknown>>(): Promise<{ results: T[] }>;
+  run(): Promise<{ meta?: { changes?: number } }>;
+}
+export interface D1Like {
+  prepare(query: string): D1StmtLike;
+}
+
 /** The minimal binding surface these helpers need. loki's full Env satisfies it. */
 export interface DataEnv {
-  DB: D1Database;
+  DB: D1Like;
   SECRETS_KEY?: string;
 }
 

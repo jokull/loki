@@ -7,6 +7,7 @@ import { serveSite } from "./site/serve";
 import { handleControlPlane } from "./control";
 import { getSiteBySubdomain } from "./tenants";
 import { buildMagicLink, normalizeEmail } from "./auth";
+import { buildAccountMagicLink } from "shared/account";
 import { DEFAULT_SITE_ID } from "./site/store";
 import { cmsExecuteFor } from "./cms-dispatch";
 
@@ -255,6 +256,29 @@ export default {
       if (!site) return Response.json({ error: "Unknown site" }, { status: 404 });
       const link = await buildMagicLink(env, site.id, email, body.redirectTo ?? "/");
       return Response.json({ siteId: site.id, email, link });
+    }
+
+    // (0c) Admin-only ACCOUNT magic-link minter (WRITE_KEY): signs a control-plane
+    // (owner) sign-in link for the loftur-web dashboard WITHOUT sending email — so
+    // an automated test can drive the account flow. loki + loftur-web share
+    // SECRETS_KEY + shared/account, so a token signed here verifies there.
+    // Body: { email, origin }.
+    if (pathname === "/__accountmagic") {
+      const token = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
+      if (!env.WRITE_KEY || token !== env.WRITE_KEY) {
+        return new Response("Unauthorized", { status: 401 });
+      }
+      let body: { email?: string; origin?: string; redirectTo?: string };
+      try {
+        body = (await request.json()) as typeof body;
+      } catch {
+        return Response.json({ error: "Invalid JSON body" }, { status: 400 });
+      }
+      const email = normalizeEmail(body.email);
+      if (!email) return Response.json({ error: "Invalid email" }, { status: 400 });
+      const origin = body.origin || "https://loftur-web.solberg.workers.dev";
+      const link = await buildAccountMagicLink(env, origin, email, body.redirectTo ?? "/dashboard");
+      return Response.json({ email, link });
     }
 
     // (1) Apex (loftur.app / www) -> the Loftur control plane (signup, keys).

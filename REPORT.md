@@ -12,11 +12,29 @@ Branch `feat/loftur-web`. Roadmap = PLAN.md. Live progress log; final summary at
   - **Deployed + verified: https://loftur-web.solberg.workers.dev serves 200 SSR HTML.**
     Framework bet is validated — proceeding with the full plan.
 
+- **Phase 1 — account auth + dashboard core** ✅ DONE
+  - shared/ extraction (crypto + data + account) — loki re-exports, typechecks, redeployed,
+    keystone still 14/14 (no regression). Structural D1 type keeps shared lib-agnostic.
+  - One shared SECRETS_KEY set on BOTH workers (rotated; invalidated only test data).
+  - loftur-web account auth: /login (magic-link via env.EMAIL), /auth/verify (sets
+    loftur_account cookie + redirect), /auth/logout. Dashboard: my-sites, owner-key
+    rotation/recovery, editor-token mint/revoke, secrets set/list/delete, claim-new-site.
+    All server-side logic in createServerFn (server-only; cloudflare:workers isolated).
+  - Admin /__accountmagic on loki (WRITE_KEY) mints account links for testing.
+  - **Blind e2e 9/9** (scratchpad/webtest.mjs): landing+login render; account link minted
+    on loki VERIFIES on web (shared SECRETS_KEY works cross-worker) → cookie → /dashboard
+    shows email + owned sites + actions; anonymous gated → /login.
+  - Note: mutation server-fns (rotate/token/secret) verified structurally (same
+    createServerFn path as the working mySitesFn/verifyFn) over proven shared/data;
+    RPC-level mutation tests deferred to Phase 7 regression harness.
+
 ## Needs-you (Morning TODO) — accumulating
 - Apex routing cutover (loftur.app/* → loftur-web; keep /mcp, /__*, *.loftur.app → loki). Not done overnight by design.
+- Review dashboard/marketing design + copy at https://loftur-web.solberg.workers.dev
 
 ## Bugs found + fixed
-- (none yet)
+- (none yet — build/type frictions only: getRouter export name, allowBuilds placeholders,
+  shared D1/BufferSource lib-portability, /login required-search.)
 
 ## Next
-- Phase 1: shared/ extraction (keep loki green) + account auth + dashboard core.
+- Phase 2: marketing + docs site.

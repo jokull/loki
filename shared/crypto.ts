@@ -83,7 +83,7 @@ export function b64urlEncode(data: ArrayBuffer | Uint8Array): string {
   return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
-export function b64urlDecode(str: string): Uint8Array {
+export function b64urlDecode(str: string): Uint8Array<ArrayBuffer> {
   const pad = str.length % 4 === 0 ? "" : "=".repeat(4 - (str.length % 4));
   const bin = atob(str.replace(/-/g, "+").replace(/_/g, "/") + pad);
   const bytes = new Uint8Array(bin.length);
