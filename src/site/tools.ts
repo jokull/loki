@@ -14,6 +14,7 @@ import {
   listVersions,
   readAsset,
   readFile,
+  restoreDraftFromVersion,
   setState,
   versionAssetManifest,
   writeFile,
@@ -576,13 +577,25 @@ export const SITE_TOOLS: SiteTool[] = [
   },
   {
     name: "rollback_site",
-    description: "Repoint the live site at a previously published version id.",
+    description:
+      "Check out a previously published version: repoint the live site at it AND " +
+      "restore the draft working tree to that version's exact authored source " +
+      "(site_diff is clean afterward). Discards any uncommitted draft edits.",
     inputSchema: { version_id: z.number().int().positive() },
     async handler({ version_id }, { env }) {
       const v = await getVersion(env, version_id);
       if (!v) return errorResult(`No such version: ${version_id}`);
+      const restored = await restoreDraftFromVersion(env, v);
       await setState(env, "published_version", String(version_id));
-      return text(`Rolled back — the live site now serves v${version_id}.`);
+      const warn = restored.compiledFallbackPaths.length
+        ? `\nNote: v${version_id} predates source snapshots; ${restored.compiledFallbackPaths.length} ` +
+          `file(s) were restored from their compiled bundle (source not byte-faithful): ` +
+          `${restored.compiledFallbackPaths.sort().join(", ")}.`
+        : "";
+      return text(
+        `Rolled back to v${version_id} — live site + draft now match it ` +
+          `(${restored.files} file(s), ${restored.assets} asset(s) restored).${warn}`,
+      );
     },
   },
   {

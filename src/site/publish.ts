@@ -376,6 +376,12 @@ export async function publishSite(
   // serve identical, version-pinned esm.sh bytes (the blobs already live in R2).
   const deps = await draftDepSnapshot(env, bundle);
 
+  // (e3) snapshot the exact authored source (path -> source). This is what makes
+  // a version faithfully reconstructable: rollback/reset restore SOURCE, not just
+  // the compiled bundle. See migrations/0006_source_in_versions.sql.
+  const sourceBundle: Record<string, string> = {};
+  for (const f of await listFiles(env)) sourceBundle[f.path] = f.source;
+
   // (f) snapshot + repoint
   const versionId = await insertVersion(
     env,
@@ -385,6 +391,7 @@ export async function publishSite(
     assetManifest,
     clientBundle,
     deps,
+    sourceBundle,
   );
   await setState(env, "published_version", String(versionId));
 

@@ -23,6 +23,8 @@ export interface SiteVersion {
   client_bundle: string | null;
   /** JSON DepSnapshot: resolved npm dep pins (esm.sh). NULL on legacy rows. */
   deps: string | null;
+  /** JSON: { [path]: source } — verbatim authored source. NULL on legacy rows. */
+  source_bundle: string | null;
 }
 
 // ---- resolved npm deps (site_deps lockfile + version snapshot) --------------
@@ -122,9 +124,10 @@ export async function insertVersion(
   assets: AssetManifest,
   clientBundle: Record<string, string>,
   deps: DepSnapshot,
+  sourceBundle: Record<string, string>,
 ): Promise<number> {
   const res = await env.DB.prepare(
-    "INSERT INTO site_versions (message, bundle, footprint, assets, client_bundle, deps) VALUES (?, ?, ?, ?, ?, ?)",
+    "INSERT INTO site_versions (message, bundle, footprint, assets, client_bundle, deps, source_bundle) VALUES (?, ?, ?, ?, ?, ?, ?)",
   )
     .bind(
       message,
@@ -133,6 +136,7 @@ export async function insertVersion(
       JSON.stringify(assets),
       JSON.stringify(clientBundle),
       JSON.stringify(deps),
+      JSON.stringify(sourceBundle),
     )
     .run();
   return Number(res.meta.last_row_id);
@@ -143,10 +147,23 @@ export async function getVersion(
   id: number,
 ): Promise<SiteVersion | null> {
   return await env.DB.prepare(
-    "SELECT id, created_at, message, bundle, footprint, assets, client_bundle, deps FROM site_versions WHERE id = ?",
+    "SELECT id, created_at, message, bundle, footprint, assets, client_bundle, deps, source_bundle FROM site_versions WHERE id = ?",
   )
     .bind(id)
     .first<SiteVersion>();
+}
+
+/** Parse a version row's snapshotted source (empty on legacy pre-0006 rows). */
+export function versionSourceBundle(
+  version: SiteVersion,
+): Record<string, string> {
+  if (!version.source_bundle) return {};
+  try {
+    const parsed = JSON.parse(version.source_bundle) as Record<string, string>;
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
 }
 
 /** Parse a version row's snapshotted dep pins (empty on legacy rows). */
@@ -247,6 +264,81 @@ export async function listVersions(
     "SELECT id, created_at, message, footprint FROM site_versions ORDER BY id DESC",
   ).all<Omit<SiteVersion, "bundle">>();
   return results ?? [];
+}
+
+export interface DraftRestoreResult {
+  files: number;
+  assets: number;
+  /** Paths whose source had to fall back to the compiled bundle (legacy version
+   * with no source snapshot) — surfaced so the caller can warn. */
+  compiledFallbackPaths: string[];
+}
+
+/**
+ * Replace the entire draft working tree (site_files + site_assets) with the
+ * given version's snapshot, reconstructing authored SOURCE byte-faithfully.
+ *
+ * A version row fully describes its tree: `source_bundle` (authored source),
+ * `bundle` (path -> `compiled ?? source`), `client_bundle` (serverFn browser
+ * stubs), and `assets` (path -> {hash,contentType,size}; blobs are immutable and
+ * content-addressed in R2, so they need no restore). We rebuild each site_files
+ * row so `source` matches what the agent authored and buildDraftBundle() then
+ * reproduces the version's bundle exactly.
+ *
+ * Legacy versions published before source snapshots (source_bundle NULL, or a
+ * path missing from it) can't restore true source; those paths fall back to the
+ * compiled bundle text as source (listed in `compiledFallbackPaths`) so the
+ * draft is still coherent and buildable.
+ */
+export async function restoreDraftFromVersion(
+  env: Env,
+  version: SiteVersion,
+): Promise<DraftRestoreResult> {
+  const bundle = JSON.parse(version.bundle) as Record<string, string>;
+  const sourceBundle = versionSourceBundle(version);
+  const clientBundle = versionClientBundle(version);
+  const assets = versionAssetManifest(version);
+
+  const compiledFallbackPaths: string[] = [];
+  const fileRows = Object.keys(bundle).map((path) => {
+    const bundled = bundle[path]; // compiled ?? source at publish time
+    const fromSource = path in sourceBundle;
+    if (!fromSource) compiledFallbackPaths.push(path);
+    const source = fromSource ? sourceBundle[path] : bundled;
+    // `compiled` is NULL when the bundle entry is just the raw-source fallback
+    // (non-transpilable files); otherwise it is the transpiled ESM. Either way
+    // buildDraftBundle()'s `compiled ?? source` reproduces `bundled` exactly.
+    const compiled = bundled === source ? null : bundled;
+    const clientCompiled = clientBundle[path] ?? null;
+    return { path, source, compiled, clientCompiled };
+  });
+
+  // Full replace in one implicit transaction: the version is the whole tree.
+  const stmts = [env.DB.prepare("DELETE FROM site_files")];
+  for (const r of fileRows) {
+    stmts.push(
+      env.DB.prepare(
+        `INSERT INTO site_files (path, source, compiled, client_compiled, updated_at)
+         VALUES (?, ?, ?, ?, datetime('now'))`,
+      ).bind(r.path, r.source, r.compiled, r.clientCompiled),
+    );
+  }
+  stmts.push(env.DB.prepare("DELETE FROM site_assets"));
+  for (const [path, a] of Object.entries(assets)) {
+    stmts.push(
+      env.DB.prepare(
+        `INSERT INTO site_assets (path, hash, content_type, size, updated_at)
+         VALUES (?, ?, ?, ?, datetime('now'))`,
+      ).bind(path, a.hash, a.contentType, a.size),
+    );
+  }
+  await env.DB.batch(stmts);
+
+  return {
+    files: fileRows.length,
+    assets: Object.keys(assets).length,
+    compiledFallbackPaths,
+  };
 }
 
 // ---- site_assets (draft asset tree) -----------------------------------------
