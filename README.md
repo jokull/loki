@@ -87,7 +87,11 @@ On top of the full agent-cms toolset (models, fields, records, publishing, asset
 | `site_versions` / `rollback_site` | List immutable versions; repoint the live pointer |
 | `site_help` | The authoring guide, served by the endpoint itself |
 
-Beyond static pages, routes can export an `action` to handle form POSTs, write to allowlisted content models (`env.RECORDS`), and push to WebSocket channels (`env.REALTIME`) — and any component can become a hydrated **Preact island** (`<Island client="visible">`) for client-side interactivity, served with no bundler via native ES modules and import maps. A live realtime guestbook, forms, and design assets all run this way today.
+Beyond static pages, routes can export typed **`serverFn`** server functions (validated, sandboxed, callable from loaders and from islands over RPC), write to allowlisted content models (`env.RECORDS`), and push to WebSocket channels (`env.REALTIME`) — and any component can become a hydrated **Preact island** for client-side interactivity, served with no bundler via native ES modules and import maps. A live realtime guestbook, per-post reactions, forms, and design assets all run this way today.
+
+**npm dependencies, no install or build step.** An agent can `import` a workerd-compatible ESM package and Loki resolves it via esm.sh at write time — snapshotted self-contained, content-addressed, version-pinned into the published version — with no `npm install`, no `node_modules`, and no bundler config. `site_write` reports exactly what was pinned (`resolvedDeps` with a `loadable` compatibility flag). Server-only dependencies never reach the browser.
+
+**A feature database via Drizzle.** For custom features that need their own relational state, agents query a dedicated D1 with Drizzle (`drizzle-orm/sqlite-proxy` + a `featuresDriver(env)` helper). Raw database access never enters the sandbox — it's mediated by an RPC entrypoint, because the platform *enforces* it: raw bindings can't cross the Worker Loader boundary, only capability stubs can. A live newsletter signup runs on this today. Feature-table schema is managed out-of-band (your own drizzle-kit/atlas), so Loki provides query access, not migrations.
 
 ## Quickstart
 
@@ -141,10 +145,13 @@ Working today: schema + content + code + design at runtime, immutable versions w
 Planned:
 
 - **Cloudflare Artifacts** as the site-code store (git-compatible branches, diffs, and a `git clone` escape hatch) once it exits private beta — D1 is the store today
+- Broaden the dependency allowlist beyond `drizzle-orm`; a browser/client dependency path; dependency-blob GC
+- Durable Object Facets for per-feature/per-user sharded state (each feature its own SQLite, same Drizzle DX)
 - Code Mode on the merged endpoint (one `code` tool instead of forty)
 - Serve-time image transforms via the Cloudflare Images binding (resize/format from one stored original)
 - Rate limiting for public write routes; presigned direct-to-R2 for large human uploads
-- Durable Object Facets for per-feature state (agent-built apps with their own SQLite)
+
+See [`DECISIONS.md`](./DECISIONS.md) for the no-bundler architecture rationale (ADR-001).
 
 ## License
 
