@@ -20,7 +20,7 @@
 
 import { WorkerEntrypoint } from "cloudflare:workers";
 import type { Env } from "./env";
-import { signToken, verifyToken } from "./crypto";
+import { signToken, verifyToken } from "shared/crypto";
 import { siteOrigin, getSiteById, DEFAULT_SITE_ID } from "./tenants";
 
 export const SESSION_COOKIE = "loki_session";

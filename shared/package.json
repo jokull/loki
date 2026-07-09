@@ -2,5 +2,10 @@
   "name": "shared",
   "version": "0.0.0",
   "private": true,
-  "type": "module"
+  "type": "module",
+  "exports": {
+    "./crypto": "./crypto.ts",
+    "./data": "./data.ts",
+    "./account": "./account.ts"
+  }
 }

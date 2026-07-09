@@ -29,6 +29,9 @@ importers:
       preact-render-to-string:
         specifier: ^6.7.0
         version: 6.7.0(preact@10.29.5)
+      shared:
+        specifier: workspace:*
+        version: link:shared
       sucrase:
         specifier: ^3.35.0
         version: 3.35.1
