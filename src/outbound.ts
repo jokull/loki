@@ -36,9 +36,7 @@ export class OutboundEntrypoint extends WorkerEntrypoint<
     // Optional per-site allowlist: empty = allow all (backward compatible). A listed
     // host matches exactly or as a parent domain (api.stripe.com allowed by stripe.com).
     if (allowed.length > 0 && hostname) {
-      const okHost = allowed.some(
-        (h) => hostname === h || hostname.endsWith("." + h),
-      );
+      const okHost = allowed.some((h) => hostname === h || hostname.endsWith("." + h));
       if (!okHost) {
         console.log(`[outbound ${siteId}] BLOCKED ${host} (not in allowedHosts)`);
         return new Response(

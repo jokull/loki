@@ -57,9 +57,7 @@ export function normalizeEmail(raw: unknown): string | null {
 
 /** Keep redirects same-origin (path-only) to avoid an open-redirect. */
 function safeRedirect(raw: unknown): string {
-  return typeof raw === "string" && raw.startsWith("/") && !raw.startsWith("//")
-    ? raw
-    : "/";
+  return typeof raw === "string" && raw.startsWith("/") && !raw.startsWith("//") ? raw : "/";
 }
 
 function getCookie(request: Request, name: string): string | null {
@@ -74,11 +72,7 @@ function getCookie(request: Request, name: string): string | null {
 
 // ---- session cookie ---------------------------------------------------------
 
-async function mintSessionCookie(
-  env: Env,
-  siteId: string,
-  user: AuthUser,
-): Promise<string> {
+async function mintSessionCookie(env: Env, siteId: string, user: AuthUser): Promise<string> {
   const payload: SessionPayload = {
     sub: user.id,
     email: user.email,
@@ -113,12 +107,7 @@ export async function resolveUser(
 ): Promise<AuthUser | null> {
   const cookie = getCookie(request, SESSION_COOKIE);
   if (!cookie) return null;
-  const payload = await verifyToken<SessionPayload>(
-    env.SECRETS_KEY,
-    siteId,
-    "session",
-    cookie,
-  );
+  const payload = await verifyToken<SessionPayload>(env.SECRETS_KEY, siteId, "session", cookie);
   if (!payload?.sub || !payload.email) return null;
   return { id: payload.sub, email: payload.email, role: payload.role ?? "member" };
 }
@@ -153,12 +142,7 @@ export async function buildMagicLink(
   return `${origin}/__auth/verify?token=${encodeURIComponent(token)}`;
 }
 
-async function sendMagicEmail(
-  env: Env,
-  host: string,
-  to: string,
-  link: string,
-): Promise<boolean> {
+async function sendMagicEmail(env: Env, host: string, to: string, link: string): Promise<boolean> {
   if (!env.EMAIL) return false;
   const html =
     `<div style="font-family:system-ui,sans-serif;max-width:28rem;margin:0 auto;padding:24px;color:#12161d">` +
@@ -242,17 +226,9 @@ export async function handleAuthRoute(
 ): Promise<Response | null> {
   if (url.pathname === "/__auth/verify") {
     const token = url.searchParams.get("token") ?? "";
-    const payload = await verifyToken<MagicPayload>(
-      env.SECRETS_KEY,
-      siteId,
-      "magic",
-      token,
-    );
+    const payload = await verifyToken<MagicPayload>(env.SECRETS_KEY, siteId, "magic", token);
     if (!payload?.email) {
-      return htmlError(
-        "This sign-in link is invalid or has expired. Request a new one.",
-        403,
-      );
+      return htmlError("This sign-in link is invalid or has expired. Request a new one.", 403);
     }
     const user = await upsertUser(env, siteId, payload.email);
     const cookie = await mintSessionCookie(env, siteId, user);
@@ -273,11 +249,7 @@ export async function handleAuthRoute(
 }
 
 /** Upsert an email into the tenant's feature DB `_auth_users`, returning the id. */
-async function upsertUser(
-  env: Env,
-  siteId: string,
-  email: string,
-): Promise<AuthUser> {
+async function upsertUser(env: Env, siteId: string, email: string): Promise<AuthUser> {
   const id = crypto.randomUUID();
   const stub = env.TENANT_FEATURE_DB.get(env.TENANT_FEATURE_DB.idFromName(siteId));
   const { id: resolvedId, role } = await stub.authUpsertUser(email, id);
@@ -291,10 +263,7 @@ export class AuthEntrypoint extends WorkerEntrypoint<Env, { siteId?: string }> {
    * Email the caller a magic sign-in link. `redirectTo` is where the user lands
    * after clicking (same-origin path; defaults to "/"). Returns { ok, sent }.
    */
-  async requestMagicLink(
-    email: string,
-    redirectTo?: string,
-  ): Promise<RequestMagicLinkResult> {
+  async requestMagicLink(email: string, redirectTo?: string): Promise<RequestMagicLinkResult> {
     const siteId = this.ctx.props?.siteId ?? DEFAULT_SITE_ID;
     return issueMagicLink(this.env, siteId, email, redirectTo);
   }

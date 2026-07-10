@@ -35,6 +35,9 @@ import {
 
 const env = cfEnv as unknown as DataEnv & AccountEnv;
 
+/** Coerce untrusted RPC input to a string; non-strings (incl. objects) → "". */
+const str = (v: unknown): string => (typeof v === "string" ? v : "");
+
 function cookieHeader(): string | null {
   return getRequest().headers.get("cookie");
 }
@@ -119,7 +122,7 @@ export const mySitesFn = createServerFn().handler(async () => {
 
 export const claimSiteFn = createServerFn({ method: "POST" })
   .validator((input: unknown) => ({
-    subdomain: String((input as { subdomain?: unknown })?.subdomain ?? ""),
+    subdomain: str((input as { subdomain?: unknown })?.subdomain),
   }))
   .handler(async ({ data }) => {
     const account = await requireAccount();
@@ -134,7 +137,9 @@ export const claimSiteFn = createServerFn({ method: "POST" })
   });
 
 export const rotateKeyFn = createServerFn({ method: "POST" })
-  .validator((input: unknown) => ({ siteId: String((input as { siteId?: unknown })?.siteId ?? "") }))
+  .validator((input: unknown) => ({
+    siteId: str((input as { siteId?: unknown })?.siteId),
+  }))
   .handler(async ({ data }) => {
     await requireOwnedSite(data.siteId);
     const apiKey = await rotateOwnerKey(env, data.siteId);
@@ -145,7 +150,9 @@ export const rotateKeyFn = createServerFn({ method: "POST" })
 // ---- editor tokens ----------------------------------------------------------
 
 export const listTokensFn = createServerFn({ method: "POST" })
-  .validator((input: unknown) => ({ siteId: String((input as { siteId?: unknown })?.siteId ?? "") }))
+  .validator((input: unknown) => ({
+    siteId: str((input as { siteId?: unknown })?.siteId),
+  }))
   .handler(async ({ data }) => {
     await requireOwnedSite(data.siteId);
     return { tokens: await listSiteTokens(env, data.siteId) };
@@ -154,7 +161,7 @@ export const listTokensFn = createServerFn({ method: "POST" })
 export const mintTokenFn = createServerFn({ method: "POST" })
   .validator((input: unknown) => {
     const i = input as { siteId?: unknown; label?: unknown };
-    return { siteId: String(i?.siteId ?? ""), label: i?.label ? String(i.label) : null };
+    return { siteId: str(i?.siteId), label: str(i?.label) || null };
   })
   .handler(async ({ data }) => {
     await requireOwnedSite(data.siteId);
@@ -165,7 +172,7 @@ export const mintTokenFn = createServerFn({ method: "POST" })
 export const revokeTokenFn = createServerFn({ method: "POST" })
   .validator((input: unknown) => {
     const i = input as { siteId?: unknown; id?: unknown };
-    return { siteId: String(i?.siteId ?? ""), id: String(i?.id ?? "") };
+    return { siteId: str(i?.siteId), id: str(i?.id) };
   })
   .handler(async ({ data }) => {
     await requireOwnedSite(data.siteId);
@@ -175,7 +182,9 @@ export const revokeTokenFn = createServerFn({ method: "POST" })
 // ---- secrets ----------------------------------------------------------------
 
 export const listSecretsFn = createServerFn({ method: "POST" })
-  .validator((input: unknown) => ({ siteId: String((input as { siteId?: unknown })?.siteId ?? "") }))
+  .validator((input: unknown) => ({
+    siteId: str((input as { siteId?: unknown })?.siteId),
+  }))
   .handler(async ({ data }) => {
     await requireOwnedSite(data.siteId);
     return { secrets: await listSecretNames(env, data.siteId) };
@@ -184,11 +193,7 @@ export const listSecretsFn = createServerFn({ method: "POST" })
 export const setSecretFn = createServerFn({ method: "POST" })
   .validator((input: unknown) => {
     const i = input as { siteId?: unknown; name?: unknown; value?: unknown };
-    return {
-      siteId: String(i?.siteId ?? ""),
-      name: String(i?.name ?? ""),
-      value: String(i?.value ?? ""),
-    };
+    return { siteId: str(i?.siteId), name: str(i?.name), value: str(i?.value) };
   })
   .handler(async ({ data }) => {
     await requireOwnedSite(data.siteId);
@@ -202,7 +207,7 @@ export const setSecretFn = createServerFn({ method: "POST" })
 export const deleteSecretFn = createServerFn({ method: "POST" })
   .validator((input: unknown) => {
     const i = input as { siteId?: unknown; name?: unknown };
-    return { siteId: String(i?.siteId ?? ""), name: String(i?.name ?? "") };
+    return { siteId: str(i?.siteId), name: str(i?.name) };
   })
   .handler(async ({ data }) => {
     await requireOwnedSite(data.siteId);

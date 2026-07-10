@@ -88,9 +88,7 @@ export function parseBareImports(source: string): string[] {
  * no name allowlist: support is determined empirically by test-load at resolve
  * time, so any bare, non-built-in specifier is a dep candidate here.
  */
-export function collectDepSpecifiers(
-  bundle: Record<string, string>,
-): string[] {
+export function collectDepSpecifiers(bundle: Record<string, string>): string[] {
   const out = new Set<string>();
   for (const code of Object.values(bundle)) {
     for (const spec of parseBareImports(code)) {
@@ -104,9 +102,7 @@ export function collectDepSpecifiers(
 async function sha256Hex(input: string): Promise<string> {
   const data = new TextEncoder().encode(input);
   const digest = await crypto.subtle.digest("SHA-256", data);
-  return [...new Uint8Array(digest)]
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 function normalizeUrl(u: string): string {
@@ -240,9 +236,10 @@ async function runProbe(
 function describeLoadFailure(err: unknown): string {
   const raw = (err instanceof Error ? err.message : String(err)).replace(/\s+/g, " ").trim();
   // A missing Node builtin is the canonical "not workerd-compatible" case.
-  const nodeMatch = raw.match(/(?:no such module|cannot find module|module not found)[^"']*["']?(node:[a-z/]+)/i)
-    || raw.match(/["'](node:[a-z/]+)["']/i)
-    || raw.match(/\b(node:[a-z/]+)\b/i);
+  const nodeMatch =
+    raw.match(/(?:no such module|cannot find module|module not found)[^"']*["']?(node:[a-z/]+)/i) ||
+    raw.match(/["'](node:[a-z/]+)["']/i) ||
+    raw.match(/\b(node:[a-z/]+)\b/i);
   if (nodeMatch) {
     return `imports "${nodeMatch[1]}", a Node builtin that isn't available in workerd (no nodejs_compat).`;
   }
@@ -278,9 +275,7 @@ async function crawlEsm(specifier: string): Promise<{
   // import paths carry `<pkg>@<ver>`), captured BEFORE we strip banners and
   // rewrite specifiers to local paths (which would erase the version).
   const pkg = packageNameOf(specifier);
-  const verRe = new RegExp(
-    pkg.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "@(\\d[^/\\s\"']*)",
-  );
+  const verRe = new RegExp(pkg.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "@(\\d[^/\\s\"']*)");
   let version = "unknown";
 
   function localNameFor(u: string): string {
@@ -340,7 +335,10 @@ async function crawlEsm(specifier: string): Promise<{
       const vm = verRe.exec(src);
       if (vm) version = vm[1];
     }
-    if (!/javascript|ecmascript|typescript/i.test(ctype) && !/^\s*(?:\/\*|import|export|\/\/)/.test(src)) {
+    if (
+      !/javascript|ecmascript|typescript/i.test(ctype) &&
+      !/^\s*(?:\/\*|import|export|\/\/)/.test(src)
+    ) {
       throw new DepResolveError(
         `${norm} did not return an ES module (content-type "${ctype}"). The ` +
           `package may not be ESM-compatible.`,
@@ -433,9 +431,7 @@ export async function resolveDep(
     throw new DepResolveError(`"${specifier}" is not a bare package specifier.`);
   }
   if (BUILTIN_SPECIFIERS.has(specifier)) {
-    throw new DepResolveError(
-      `"${specifier}" is a Loki built-in, not an npm dependency.`,
-    );
+    throw new DepResolveError(`"${specifier}" is a Loki built-in, not an npm dependency.`);
   }
 
   const { version, entryKey, modules } = await crawlEsm(specifier);
@@ -538,10 +534,7 @@ export interface AssembledDeps {
  * map. Loads module bytes from R2 (cached). depHash namespacing pins exact
  * content, so different pins never collide and published isolates are byte-exact.
  */
-export async function assembleDeps(
-  env: Env,
-  snapshot: DepSnapshot,
-): Promise<AssembledDeps> {
+export async function assembleDeps(env: Env, snapshot: DepSnapshot): Promise<AssembledDeps> {
   const depModules: Record<string, string> = {};
   const specifierMap: Record<string, string> = {};
   for (const [specifier, entry] of Object.entries(snapshot)) {

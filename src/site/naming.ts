@@ -80,10 +80,7 @@ export interface FieldSurface {
 }
 
 /** Compute the GraphQL surface for a field, given its parent model api_key. */
-export function fieldSurface(
-  modelApiKey: string,
-  fieldApiKey: string,
-): FieldSurface {
+export function fieldSurface(modelApiKey: string, fieldApiKey: string): FieldSurface {
   const typeName = toContentTypeName(modelApiKey);
   const fieldName = toCamelCase(fieldApiKey);
   return { typeName, fieldName, entry: `${typeName}.${fieldName}` };

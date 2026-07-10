@@ -59,20 +59,14 @@ function extractRecordId(result: McpToolResult): string | null {
   return null;
 }
 
-async function modelHasDraft(
-  env: Env,
-  siteId: string,
-  modelApiKey: string,
-): Promise<boolean> {
+async function modelHasDraft(env: Env, siteId: string, modelApiKey: string): Promise<boolean> {
   // Per-site: the default site's models live in the shared D1; a tenant's live
   // in its own TenantDB SQLite.
   if (siteId !== DEFAULT_SITE_ID) {
     const stub = env.TENANT_DB.get(env.TENANT_DB.idFromName(siteId));
     return await stub.modelHasDraft(modelApiKey);
   }
-  const row = await env.DB.prepare(
-    "SELECT has_draft FROM models WHERE api_key = ?",
-  )
+  const row = await env.DB.prepare("SELECT has_draft FROM models WHERE api_key = ?")
     .bind(modelApiKey)
     .first<{ has_draft: number }>();
   return !!row && row.has_draft === 1;
@@ -84,10 +78,7 @@ export class RecordsEntrypoint extends WorkerEntrypoint<Env, RecordsProps> {
    * `{ error }` (allowlist rejection or a CMS validation failure) — never throws
    * across the RPC boundary for expected failures.
    */
-  async create(
-    modelApiKey: string,
-    fields: Record<string, unknown>,
-  ): Promise<RecordCreateResult> {
+  async create(modelApiKey: string, fields: Record<string, unknown>): Promise<RecordCreateResult> {
     const allowlist = this.ctx.props?.allowlist ?? [];
     const siteId = this.ctx.props?.siteId ?? DEFAULT_SITE_ID;
     if (!allowlist.includes(modelApiKey)) {

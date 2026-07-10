@@ -14,9 +14,11 @@ export const Route = createFileRoute("/login")({
 
 function Login() {
   const [email, setEmail] = useState("");
-  const [state, setState] = useState<
-    { status: "idle" | "sending" | "sent" | "error"; msg?: string; devLink?: string }
-  >({ status: "idle" });
+  const [state, setState] = useState<{
+    status: "idle" | "sending" | "sent" | "error";
+    msg?: string;
+    devLink?: string;
+  }>({ status: "idle" });
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -40,20 +42,23 @@ function Login() {
           <Eyebrow>Account</Eyebrow>
           <CardTitle className="text-xl">Sign in</CardTitle>
           <CardDescription>
-            Manage your sites, keys, editor tokens, and secrets. We'll email you a one-time
-            sign-in link — no password.
+            Manage your sites, keys, editor tokens, and secrets. We'll email you a one-time sign-in
+            link — no password.
           </CardDescription>
         </CardHeader>
         <CardContent>
           {state.status === "sent" ? (
             <div className="flex flex-col gap-3">
               <Callout variant="ok">
-                Check your inbox — we sent a sign-in link to <b>{email}</b>. It expires in 15 minutes.
+                Check your inbox — we sent a sign-in link to <b>{email}</b>. It expires in 15
+                minutes.
               </Callout>
               {state.devLink && (
                 <p className="text-sm text-muted-foreground">
                   Dev link:{" "}
-                  <a href={state.devLink} className="break-all">{state.devLink}</a>
+                  <a href={state.devLink} className="break-all">
+                    {state.devLink}
+                  </a>
                 </p>
               )}
             </div>

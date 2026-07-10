@@ -65,10 +65,7 @@ function getCookie(cookieHeader: string | null, name: string): string | null {
 
 // ---- session cookie ---------------------------------------------------------
 
-export async function mintAccountCookie(
-  env: AccountEnv,
-  email: string,
-): Promise<string> {
+export async function mintAccountCookie(env: AccountEnv, email: string): Promise<string> {
   const payload: SessionPayload = { email, exp: Date.now() + SESSION_TTL_SEC * 1000 };
   const token = await signToken(
     env.SECRETS_KEY,
@@ -90,10 +87,7 @@ export function clearAccountCookie(): string {
 export const ACCOUNT_MAXAGE_SEC = SESSION_TTL_SEC;
 
 /** Sign just the session token value (for setCookie(name, value, opts)). */
-export async function signAccountSessionToken(
-  env: AccountEnv,
-  email: string,
-): Promise<string> {
+export async function signAccountSessionToken(env: AccountEnv, email: string): Promise<string> {
   const payload: SessionPayload = { email, exp: Date.now() + SESSION_TTL_SEC * 1000 };
   return signToken(
     env.SECRETS_KEY,
@@ -186,7 +180,11 @@ export async function requestAccountMagicLink(
     }
   } catch (err) {
     console.error("[account auth] email send failed:", err);
-    return { ok: false, sent: false, error: "Could not send the sign-in email. Try again shortly." };
+    return {
+      ok: false,
+      sent: false,
+      error: "Could not send the sign-in email. Try again shortly.",
+    };
   }
   const dev = env.ENVIRONMENT !== "production";
   return { ok: true, sent, devLink: dev || !sent ? link : undefined };

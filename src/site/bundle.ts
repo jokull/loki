@@ -72,10 +72,7 @@ function rewriteSpecifiers(
   re: RegExp,
 ): string {
   const prefix = relPrefix(importerKey);
-  return code.replace(
-    re,
-    (_m, pre, q, spec) => `${pre}${q}${prefix}${fileMap[spec]}${q}`,
-  );
+  return code.replace(re, (_m, pre, q, spec) => `${pre}${q}${prefix}${fileMap[spec]}${q}`);
 }
 
 const MODULE_EXT = /\.(tsx|ts|jsx|mjs|js)$/;
@@ -91,9 +88,7 @@ export function routePathToPattern(path: string): string {
   if (segments.length && segments[segments.length - 1] === "index") {
     segments.pop();
   }
-  const pattern = segments
-    .map((seg) => seg.replace(/^\[(.+)\]$/, ":$1"))
-    .join("/");
+  const pattern = segments.map((seg) => seg.replace(/^\[(.+)\]$/, ":$1")).join("/");
   return "/" + pattern;
 }
 
@@ -126,10 +121,7 @@ export interface BuiltWorker {
 
 const EMPTY_DEPS: AssembledDeps = { depModules: {}, specifierMap: {} };
 
-export function buildWorkerCode(
-  bundle: Bundle,
-  deps: AssembledDeps = EMPTY_DEPS,
-): BuiltWorker {
+export function buildWorkerCode(bundle: Bundle, deps: AssembledDeps = EMPTY_DEPS): BuiltWorker {
   // The rewrite map: bare runtime built-ins (flat vendor files) + resolved dep
   // entry specifiers (namespaced `deps/<hash>/<entry>`). Rebuilt per bundle.
   const fileMap: Record<string, string> = { ...VENDOR_FILES, ...deps.specifierMap };
@@ -205,15 +197,12 @@ export function buildWorkerCode(
       return pa - pb || na - nb;
     });
   const table = routes
-    .map(
-      (r) => `  { pattern: ${JSON.stringify(r.pattern)}, mod: __m${indexOf.get(r.path)} },`,
-    )
+    .map((r) => `  { pattern: ${JSON.stringify(r.pattern)}, mod: __m${indexOf.get(r.path)} },`)
     .join("\n");
 
   // Global head: the `head` export of a top-level `app.*` module, if present.
   const appModule = Object.keys(bundle).find(isAppModule);
-  const globalHeadExpr =
-    appModule != null ? `__m${indexOf.get(appModule)}.head` : "undefined";
+  const globalHeadExpr = appModule != null ? `__m${indexOf.get(appModule)}.head` : "undefined";
 
   const vendorBase = "/__vendor/" + RUNTIME_VERSION;
   const entry = `

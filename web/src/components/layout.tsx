@@ -8,14 +8,8 @@ export function Shell({
   width = "default",
   ...props
 }: React.HTMLAttributes<HTMLDivElement> & { width?: "default" | "prose" | "narrow" }) {
-  const max =
-    width === "narrow" ? "max-w-md" : width === "prose" ? "max-w-3xl" : "max-w-5xl";
-  return (
-    <div
-      className={cn("mx-auto w-full px-5 py-10 sm:py-14", max, className)}
-      {...props}
-    />
-  );
+  const max = width === "narrow" ? "max-w-md" : width === "prose" ? "max-w-3xl" : "max-w-5xl";
+  return <div className={cn("mx-auto w-full px-5 py-10 sm:py-14", max, className)} {...props} />;
 }
 
 export function Eyebrow({ className, ...props }: React.HTMLAttributes<HTMLParagraphElement>) {
@@ -48,8 +42,12 @@ export function SiteFooter() {
         <Brand className="text-[0.95rem] font-medium" />
       </Link>
       <div className="flex items-center gap-4">
-        <Link to="/docs" className="no-underline hover:text-foreground">Docs</Link>
-        <Link to="/changelog" className="no-underline hover:text-foreground">Changelog</Link>
+        <Link to="/docs" className="no-underline hover:text-foreground">
+          Docs
+        </Link>
+        <Link to="/changelog" className="no-underline hover:text-foreground">
+          Changelog
+        </Link>
         <a
           href="https://github.com/jokull/loftur"
           target="_blank"

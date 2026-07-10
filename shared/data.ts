@@ -41,11 +41,47 @@ export interface Site {
 
 /** Subdomains reserved for the platform itself. */
 const RESERVED = new Set([
-  "www", "app", "api", "mcp", "auth", "admin", "dashboard", "dash", "help",
-  "docs", "doc", "status", "mail", "email", "ftp", "cdn", "assets", "static",
-  "default", "loftur", "test", "staging", "stage", "dev", "beta", "internal",
-  "console", "account", "accounts", "billing", "support", "blog", "about",
-  "__default__", "ns", "ns1", "ns2", "smtp", "webmail", "portal", "id",
+  "www",
+  "app",
+  "api",
+  "mcp",
+  "auth",
+  "admin",
+  "dashboard",
+  "dash",
+  "help",
+  "docs",
+  "doc",
+  "status",
+  "mail",
+  "email",
+  "ftp",
+  "cdn",
+  "assets",
+  "static",
+  "default",
+  "loftur",
+  "test",
+  "staging",
+  "stage",
+  "dev",
+  "beta",
+  "internal",
+  "console",
+  "account",
+  "accounts",
+  "billing",
+  "support",
+  "blog",
+  "about",
+  "__default__",
+  "ns",
+  "ns1",
+  "ns2",
+  "smtp",
+  "webmail",
+  "portal",
+  "id",
 ]);
 
 export interface SubdomainCheck {
@@ -63,8 +99,7 @@ export function validateSubdomain(raw: string): SubdomainCheck {
   if (!/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(sub)) {
     return {
       ok: false,
-      error:
-        "Use lowercase letters, numbers, and hyphens only (no leading/trailing hyphen).",
+      error: "Use lowercase letters, numbers, and hyphens only (no leading/trailing hyphen).",
     };
   }
   if (sub.includes("--")) {
@@ -80,9 +115,7 @@ export function validateSubdomain(raw: string): SubdomainCheck {
 export async function hashApiKey(key: string): Promise<string> {
   const data = new TextEncoder().encode(key);
   const digest = await crypto.subtle.digest("SHA-256", data);
-  return [...new Uint8Array(digest)]
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 function randomHex(bytes: number): string {
@@ -100,10 +133,7 @@ function generateSiteId(): string {
   return randomHex(12);
 }
 
-export async function getSiteBySubdomain(
-  env: DataEnv,
-  subdomain: string,
-): Promise<Site | null> {
+export async function getSiteBySubdomain(env: DataEnv, subdomain: string): Promise<Site | null> {
   return env.DB.prepare(
     "SELECT id, subdomain, email, api_key_hash, created_at FROM sites WHERE subdomain = ?",
   )
@@ -119,10 +149,7 @@ export async function getSiteById(env: DataEnv, id: string): Promise<Site | null
     .first<Site>();
 }
 
-export async function getSiteByApiKey(
-  env: DataEnv,
-  key: string,
-): Promise<Site | null> {
+export async function getSiteByApiKey(env: DataEnv, key: string): Promise<Site | null> {
   const hash = await hashApiKey(key);
   return env.DB.prepare(
     "SELECT id, subdomain, email, api_key_hash, created_at FROM sites WHERE api_key_hash = ?",
@@ -132,10 +159,7 @@ export async function getSiteByApiKey(
 }
 
 /** All sites owned by an email (the dashboard's "my sites"). */
-export async function getSitesByEmail(
-  env: DataEnv,
-  email: string,
-): Promise<Site[]> {
+export async function getSitesByEmail(env: DataEnv, email: string): Promise<Site[]> {
   const { results } = await env.DB.prepare(
     "SELECT id, subdomain, email, api_key_hash, created_at FROM sites WHERE lower(email) = ? ORDER BY created_at DESC",
   )
@@ -197,17 +221,12 @@ export async function createSite(
  * the new key ONCE. Backs dashboard key recovery — an owner who lost their key
  * signs in by email and rotates. Returns null if the site doesn't exist.
  */
-export async function rotateOwnerKey(
-  env: DataEnv,
-  siteId: string,
-): Promise<string | null> {
+export async function rotateOwnerKey(env: DataEnv, siteId: string): Promise<string | null> {
   const site = await getSiteById(env, siteId);
   if (!site) return null;
   const apiKey = generateApiKey();
   const hash = await hashApiKey(apiKey);
-  await env.DB.prepare("UPDATE sites SET api_key_hash = ? WHERE id = ?")
-    .bind(hash, siteId)
-    .run();
+  await env.DB.prepare("UPDATE sites SET api_key_hash = ? WHERE id = ?").bind(hash, siteId).run();
   return apiKey;
 }
 
@@ -248,10 +267,7 @@ export async function createSiteToken(
 }
 
 /** Resolve a scoped token to its site + role (null if unknown). */
-export async function getSiteToken(
-  env: DataEnv,
-  token: string,
-): Promise<SiteToken | null> {
+export async function getSiteToken(env: DataEnv, token: string): Promise<SiteToken | null> {
   const hash = await hashApiKey(token);
   return env.DB.prepare(
     "SELECT id, site_id, token_hash, role, label, created_at FROM site_tokens WHERE token_hash = ?",
@@ -273,14 +289,8 @@ export async function listSiteTokens(
 }
 
 /** Revoke a token by id, scoped to the site. */
-export async function revokeSiteToken(
-  env: DataEnv,
-  siteId: string,
-  id: string,
-): Promise<boolean> {
-  const res = await env.DB.prepare(
-    "DELETE FROM site_tokens WHERE site_id = ? AND id = ?",
-  )
+export async function revokeSiteToken(env: DataEnv, siteId: string, id: string): Promise<boolean> {
+  const res = await env.DB.prepare("DELETE FROM site_tokens WHERE site_id = ? AND id = ?")
     .bind(siteId, id)
     .run();
   return (res.meta?.changes ?? 0) > 0;
@@ -342,14 +352,8 @@ export async function listSecretNames(
   return results ?? [];
 }
 
-export async function deleteSecret(
-  env: DataEnv,
-  siteId: string,
-  name: string,
-): Promise<boolean> {
-  const res = await env.DB.prepare(
-    "DELETE FROM site_secrets WHERE site_id = ? AND name = ?",
-  )
+export async function deleteSecret(env: DataEnv, siteId: string, name: string): Promise<boolean> {
+  const res = await env.DB.prepare("DELETE FROM site_secrets WHERE site_id = ? AND name = ?")
     .bind(siteId, name)
     .run();
   return (res.meta?.changes ?? 0) > 0;

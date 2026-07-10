@@ -50,8 +50,15 @@ function Changelog() {
   return (
     <Shell width="prose" className="flex flex-col gap-10">
       <SiteHeader>
-        <Link to="/docs" className="px-2 text-sm text-muted-foreground no-underline hover:text-foreground">Docs</Link>
-        <Button variant="sky" size="sm" render={<Link to="/login" />}>Sign in</Button>
+        <Link
+          to="/docs"
+          className="px-2 text-sm text-muted-foreground no-underline hover:text-foreground"
+        >
+          Docs
+        </Link>
+        <Button variant="sky" size="sm" render={<Link to="/login" />}>
+          Sign in
+        </Button>
       </SiteHeader>
 
       <div className="flex flex-col gap-2">
@@ -67,15 +74,26 @@ function Changelog() {
               <h3 className="text-base font-medium">{e.title}</h3>
             </div>
             <ul className="flex list-disc flex-col gap-1.5 pl-5 text-sm text-muted-foreground marker:text-link">
-              {e.items.map((it, j) => <li key={j}>{it}</li>)}
+              {e.items.map((it, j) => (
+                <li key={j}>{it}</li>
+              ))}
             </ul>
           </Card>
         ))}
       </div>
 
       <footer className="flex items-center justify-between border-t border-border pt-6 text-sm text-muted-foreground">
-        <Link to="/" className="no-underline hover:text-foreground">← Home</Link>
-        <a href="https://github.com/jokull/loftur" target="_blank" rel="noreferrer" className="no-underline hover:text-foreground">GitHub</a>
+        <Link to="/" className="no-underline hover:text-foreground">
+          ← Home
+        </Link>
+        <a
+          href="https://github.com/jokull/loftur"
+          target="_blank"
+          rel="noreferrer"
+          className="no-underline hover:text-foreground"
+        >
+          GitHub
+        </a>
       </footer>
     </Shell>
   );

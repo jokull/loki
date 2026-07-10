@@ -39,7 +39,13 @@ const results = [];
 for (const [label, file] of SUITES) {
   process.stdout.write(`\n▶ ${label}\n`);
   const { code, out } = await run(file);
-  process.stdout.write(out.split("\n").filter((l) => /^[✅❌]|passed|FATAL/.test(l)).map((l) => "  " + l).join("\n") + "\n");
+  process.stdout.write(
+    out
+      .split("\n")
+      .filter((l) => /^[✅❌]|passed|FATAL/.test(l))
+      .map((l) => "  " + l)
+      .join("\n") + "\n",
+  );
   results.push({ label, ok: code === 0 });
 }
 

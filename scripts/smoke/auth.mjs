@@ -7,22 +7,28 @@ import { setTimeout as sleep } from "node:timers/promises";
 const WRITE_KEY = process.env.WRITE_KEY;
 if (!WRITE_KEY) throw new Error("WRITE_KEY missing (run under dotenvx -f .env)");
 const APEX = "https://loftur.app";
-const SUB = "authlab" + Math.floor(Date.now() / 1000) % 100000;
+const SUB = "authlab" + (Math.floor(Date.now() / 1000) % 100000);
 
-let mcpUrl, KEY, ORIGIN, siteId;
+let mcpUrl, KEY, ORIGIN;
 let rid = 1;
 async function rpc(method, params) {
   const r = await fetch(mcpUrl, {
     method: "POST",
-    headers: { "content-type": "application/json", accept: "application/json, text/event-stream", authorization: "Bearer " + KEY },
+    headers: {
+      "content-type": "application/json",
+      accept: "application/json, text/event-stream",
+      authorization: "Bearer " + KEY,
+    },
     body: JSON.stringify({ jsonrpc: "2.0", id: rid++, method, params }),
   });
   const ct = r.headers.get("content-type") || "";
   const t = await r.text();
   if (r.status >= 400) throw new Error("HTTP " + r.status + ": " + t.slice(0, 300));
   let j;
-  if (ct.includes("event-stream")) { const d = t.split(/\r?\n/).filter((l) => l.startsWith("data:")); j = JSON.parse(d[d.length - 1].slice(5).trim()); }
-  else j = JSON.parse(t);
+  if (ct.includes("event-stream")) {
+    const d = t.split(/\r?\n/).filter((l) => l.startsWith("data:"));
+    j = JSON.parse(d[d.length - 1].slice(5).trim());
+  } else j = JSON.parse(t);
   if (j.error) throw new Error(JSON.stringify(j.error));
   return j.result;
 }
@@ -87,20 +93,36 @@ function parseCookie(setCookie, name) {
 
 async function main() {
   const results = [];
-  const ok = (label, cond, detail = "") => { results.push({ label, pass: !!cond, detail }); console.log(`${cond ? "✅" : "❌"} ${label}${detail ? " — " + detail : ""}`); };
+  const ok = (label, cond, detail = "") => {
+    results.push({ label, pass: !!cond, detail });
+    console.log(`${cond ? "✅" : "❌"} ${label}${detail ? " — " + detail : ""}`);
+  };
 
   // 1. Sign up a fresh site
-  const su = await fetch(APEX + "/api/signup", { method: "POST", headers: { "content-type": "application/json", accept: "application/json" }, body: JSON.stringify({ subdomain: SUB, email: "jokull@triptojapan.com" }) });
+  const su = await fetch(APEX + "/api/signup", {
+    method: "POST",
+    headers: { "content-type": "application/json", accept: "application/json" },
+    body: JSON.stringify({ subdomain: SUB, email: "jokull@triptojapan.com" }),
+  });
   const suj = await su.json();
   if (!suj.apiKey) throw new Error("signup failed: " + JSON.stringify(suj));
-  KEY = suj.apiKey; ORIGIN = suj.siteUrl; mcpUrl = suj.mcpUrl;
+  KEY = suj.apiKey;
+  ORIGIN = suj.siteUrl;
+  mcpUrl = suj.mcpUrl;
   console.log(`\nSite: ${ORIGIN}  (mcp ${mcpUrl})`);
 
   // 2. Set a secret (owner tool)
-  const setOut = await tool("set_secret", { name: "ECHO_TOKEN", value: "sk_test_ABC123_secret_value" });
+  const setOut = await tool("set_secret", {
+    name: "ECHO_TOKEN",
+    value: "sk_test_ABC123_secret_value",
+  });
   ok("set_secret stores a secret", /Stored secret/.test(setOut));
   const listOut = await tool("list_secrets", {});
-  ok("list_secrets shows the name, not the value", /ECHO_TOKEN/.test(listOut) && !/ABC123/.test(listOut), listOut.split("\n")[0]);
+  ok(
+    "list_secrets shows the name, not the value",
+    /ECHO_TOKEN/.test(listOut) && !/ABC123/.test(listOut),
+    listOut.split("\n")[0],
+  );
 
   // 3. Build + publish the site
   for (const [p, s] of Object.entries(FILES)) await write(p, s);
@@ -114,54 +136,110 @@ async function main() {
   // 4. secretcheck serverFn (GET) — proves SECRETS + OUTBOUND from the isolate
   const scRes = await fetch(`${ORIGIN}/__fn/v${vm[1]}/functions%2Ftest.ts%23secretcheck`);
   const sc = await scRes.json();
-  ok("env.SECRETS.get returns the secret in-isolate", sc.hasSecret === true && sc.secretLen === "sk_test_ABC123_secret_value".length, JSON.stringify(sc));
-  ok("mediated outbound fetch() works (example.com 200)", sc.outbound === 200, "status=" + sc.outbound);
-  ok("env.SECRETS.names lists the secret", Array.isArray(sc.names) && sc.names.includes("ECHO_TOKEN"));
+  ok(
+    "env.SECRETS.get returns the secret in-isolate",
+    sc.hasSecret === true && sc.secretLen === "sk_test_ABC123_secret_value".length,
+    JSON.stringify(sc),
+  );
+  ok(
+    "mediated outbound fetch() works (example.com 200)",
+    sc.outbound === 200,
+    "status=" + sc.outbound,
+  );
+  ok(
+    "env.SECRETS.names lists the secret",
+    Array.isArray(sc.names) && sc.names.includes("ECHO_TOKEN"),
+  );
 
   // 5. Members page WITHOUT a session -> gated
   const anon = await (await fetch(`${ORIGIN}/members`)).text();
   ok("members page gates anonymous users", /Members only/.test(anon));
 
   // 6. Mint a magic link via the admin route (no real inbox), follow it -> session cookie
-  const mm = await fetch(APEX + "/__authmagic", { method: "POST", headers: { "content-type": "application/json", authorization: "Bearer " + WRITE_KEY }, body: JSON.stringify({ sub: SUB, email: "member@example.com", redirectTo: "/members" }) });
+  const mm = await fetch(APEX + "/__authmagic", {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: "Bearer " + WRITE_KEY },
+    body: JSON.stringify({ sub: SUB, email: "member@example.com", redirectTo: "/members" }),
+  });
   const mmj = await mm.json();
-  ok("admin magic-link minter returns a link", !!mmj.link, mmj.link ? mmj.link.slice(0, 60) + "…" : JSON.stringify(mmj));
-  siteId = mmj.siteId;
+  ok(
+    "admin magic-link minter returns a link",
+    !!mmj.link,
+    mmj.link ? mmj.link.slice(0, 60) + "…" : JSON.stringify(mmj),
+  );
 
   const verify = await fetch(mmj.link, { redirect: "manual" });
   const setCookie = verify.headers.get("set-cookie");
   const session = parseCookie(setCookie, "loki_session");
-  ok("verify sets a loki_session cookie + redirects", verify.status === 302 && !!session && verify.headers.get("location") === "/members", `status=${verify.status} loc=${verify.headers.get("location")}`);
+  ok(
+    "verify sets a loki_session cookie + redirects",
+    verify.status === 302 && !!session && verify.headers.get("location") === "/members",
+    `status=${verify.status} loc=${verify.headers.get("location")}`,
+  );
 
   const cookieHeader = "loki_session=" + session;
 
   // 7. Members page WITH the session -> welcomed
-  const authed = await (await fetch(`${ORIGIN}/members`, { headers: { cookie: cookieHeader } })).text();
+  const authed = await (
+    await fetch(`${ORIGIN}/members`, { headers: { cookie: cookieHeader } })
+  ).text();
   ok("members page shows the user when signed in", /Welcome, member@example.com/.test(authed));
 
   // 8. whoami serverFn WITH session -> user injected into serverFn too
-  const whoRes = await fetch(`${ORIGIN}/__fn/v${vm[1]}/functions%2Ftest.ts%23whoami`, { headers: { cookie: cookieHeader } });
+  const whoRes = await fetch(`${ORIGIN}/__fn/v${vm[1]}/functions%2Ftest.ts%23whoami`, {
+    headers: { cookie: cookieHeader },
+  });
   const who = await whoRes.json();
-  ok("user is injected into serverFns", who.user && who.user.email === "member@example.com", JSON.stringify(who));
+  ok(
+    "user is injected into serverFns",
+    who.user && who.user.email === "member@example.com",
+    JSON.stringify(who),
+  );
 
   // 9. whoami WITHOUT session -> null (and a forged header must NOT be trusted)
-  const whoAnon = await (await fetch(`${ORIGIN}/__fn/v${vm[1]}/functions%2Ftest.ts%23whoami`, { headers: { "x-loki-user": JSON.stringify({ id: "forged", email: "attacker@evil.com" }) } })).json();
-  ok("client-supplied x-loki-user header is stripped (not trusted)", whoAnon.user === null, JSON.stringify(whoAnon));
+  const whoAnon = await (
+    await fetch(`${ORIGIN}/__fn/v${vm[1]}/functions%2Ftest.ts%23whoami`, {
+      headers: { "x-loki-user": JSON.stringify({ id: "forged", email: "attacker@evil.com" }) },
+    })
+  ).json();
+  ok(
+    "client-supplied x-loki-user header is stripped (not trusted)",
+    whoAnon.user === null,
+    JSON.stringify(whoAnon),
+  );
 
   // 10. Logout clears the cookie
-  const lo = await fetch(`${ORIGIN}/__auth/logout`, { headers: { cookie: cookieHeader }, redirect: "manual" });
+  const lo = await fetch(`${ORIGIN}/__auth/logout`, {
+    headers: { cookie: cookieHeader },
+    redirect: "manual",
+  });
   const cleared = lo.headers.get("set-cookie") || "";
-  ok("logout clears the session cookie", lo.status === 302 && /loki_session=;/.test(cleared) && /Max-Age=0/.test(cleared));
+  ok(
+    "logout clears the session cookie",
+    lo.status === 302 && /loki_session=;/.test(cleared) && /Max-Age=0/.test(cleared),
+  );
 
   // 11. REAL email send via env.AUTH (route action -> Cloudflare Email). sent:true
   //     means env.EMAIL.send did not throw. Sends one real email — skip with SKIP_MAIL=1.
   if (!process.env.SKIP_MAIL) {
-    const loginRes = await fetch(`${ORIGIN}/login`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: "email=jokull@triptojapan.com", redirect: "manual" });
-    ok("login form triggers env.AUTH.requestMagicLink -> real email (303 redirect)", loginRes.status === 303 && loginRes.headers.get("location") === "/?sent=1", "status=" + loginRes.status);
+    const loginRes = await fetch(`${ORIGIN}/login`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: "email=jokull@triptojapan.com",
+      redirect: "manual",
+    });
+    ok(
+      "login form triggers env.AUTH.requestMagicLink -> real email (303 redirect)",
+      loginRes.status === 303 && loginRes.headers.get("location") === "/?sent=1",
+      "status=" + loginRes.status,
+    );
   }
 
   const passed = results.filter((r) => r.pass).length;
   console.log(`\n${passed}/${results.length} checks passed  —  site ${ORIGIN}`);
   if (passed !== results.length) process.exit(1);
 }
-main().catch((e) => { console.error("FATAL", e); process.exit(1); });
+main().catch((e) => {
+  console.error("FATAL", e);
+  process.exit(1);
+});

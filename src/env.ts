@@ -25,9 +25,7 @@ export interface Env {
    * the agent's app tables never collide with agent-cms's reserved tables. One
    * instance per site (idFromName(siteId)). See src/tenant-db.ts.
    */
-  TENANT_FEATURE_DB: DurableObjectNamespace<
-    import("./tenant-db").TenantFeatureDB
-  >;
+  TENANT_FEATURE_DB: DurableObjectNamespace<import("./tenant-db").TenantFeatureDB>;
   /**
    * R2 bucket (`loki-assets`) shared by two independent concerns:
    * - agent-cms content assets (keyed under `uploads/…` by agent-cms itself);
@@ -77,8 +75,7 @@ export type CmsHandler = ReturnType<typeof createCMSHandler>;
  * bypass Loki's migration guard (see PLAN.md). LOADER is used only for serving
  * the dynamic site worker.
  */
-let cachedBindings: Parameters<typeof createCMSHandler>[0]["bindings"] | null =
-  null;
+let cachedBindings: Parameters<typeof createCMSHandler>[0]["bindings"] | null = null;
 
 export function getCms(env: Env, origin = "https://loki.solberg.workers.dev"): CmsHandler {
   if (!cachedBindings) {

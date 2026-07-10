@@ -20,7 +20,7 @@ Every islands/RSC framework assumes an **ahead-of-time build**:
 - **TanStack Start** — Vite build-time; `createServerFn` server functions are
   addressed by IDs a bundler generates. An app framework for a human in a repo
   who runs a build and deploys.
-- **`"use server"` / `"use client"`** is a *compiler* feature — implemented by
+- **`"use server"` / `"use client"`** is a _compiler_ feature — implemented by
   bundler plugins (Next/Turbopack, experimental Vite RSC, Parcel RSC, Waku).
   The compiler is what extracts server-function bodies and replaces them with
   client references.
@@ -36,10 +36,10 @@ runtime with no repo and no build." Some hand-rolling is inherent to the idea.
 ### Decision
 
 **Stay no-bundler (Path A).** Keep JIT per-file transpile + native ESM + import
-maps. Make the server/client boundary an *explicit, enforced convention* rather
+maps. Make the server/client boundary an _explicit, enforced convention_ rather
 than a compiler-derived one:
 
-- A **serverFn** module is server-only. Its browser build is *synthesized* from
+- A **serverFn** module is server-only. Its browser build is _synthesized_ from
   its serverFn exports — a stub per export keyed by a stable id + method — so
   handler/validator/gql source never ships to the client. A serverFn module that
   also exports a non-serverFn value is rejected at write/publish (its value would
@@ -50,16 +50,16 @@ than a compiler-derived one:
   time and hard-gated at publish — the runtime-native equivalent of type-checking
   without an IDE or codegen watcher.
 
-We borrow the *ergonomics* of TanStack Start / RSC (serverFn ≈ createServerFn,
+We borrow the _ergonomics_ of TanStack Start / RSC (serverFn ≈ createServerFn,
 islands ≈ client components, typed boundary) on purpose — they are the best API
-designs available — while rejecting the *machinery* (a bundler), which we cannot
+designs available — while rejecting the _machinery_ (a bundler), which we cannot
 share because ours is bundler-free by design.
 
 ### Rejected alternative (Path B) — esbuild-wasm dynamic bundling at publish
 
 Running a real bundler inside the Worker at publish would give code-splitting,
 tree-shaking (which would strip the serverFn handler leak for free), and a
-directive-style split from a mature tool. Rejected as the *core model* because:
+directive-style split from a mature tool. Rejected as the _core model_ because:
 the moment a heavyweight bundler is mandatory, Loki converges on "just use
 TanStack Start in a repo," eroding its only differentiator — no repo, no build,
 agent-in-the-loop. Publishes would also get heavier and more fragile, and most

@@ -10,11 +10,7 @@ export * from "shared/data";
 export { DEFAULT_SITE_ID };
 
 /** The public origin a site is served from (for preview/absolute URLs). */
-export async function siteOrigin(
-  env: Env,
-  siteId: string,
-  fallback: string,
-): Promise<string> {
+export async function siteOrigin(env: Env, siteId: string, fallback: string): Promise<string> {
   if (siteId === DEFAULT_SITE_ID) return fallback;
   const site = await getSiteById(env, siteId);
   return site ? `https://${site.subdomain}.loftur.app` : fallback;

@@ -8,8 +8,7 @@ const buttonVariants = cva(
     variants: {
       variant: {
         // Ink — the minimal-black default.
-        default:
-          "bg-primary text-primary-foreground border border-transparent hover:bg-primary/90",
+        default: "bg-primary text-primary-foreground border border-transparent hover:bg-primary/90",
         // Sky — the one baby-blue accent; ink text for contrast on the soft fill.
         sky: "bg-sky text-sky-foreground border border-transparent shadow-[0_1px_0_0_color-mix(in_oklch,var(--sky)_70%,#000_18%)] hover:brightness-[1.04]",
         secondary:
@@ -34,20 +33,12 @@ const buttonVariants = cva(
 );
 
 export interface ButtonProps
-  extends React.ButtonHTMLAttributes<HTMLButtonElement>,
-    VariantProps<typeof buttonVariants> {
+  extends React.ButtonHTMLAttributes<HTMLButtonElement>, VariantProps<typeof buttonVariants> {
   /** Compose with another element (e.g. a router <Link />) instead of <button>. */
   render?: useRender.RenderProp;
 }
 
-export function Button({
-  className,
-  variant,
-  size,
-  render,
-  type,
-  ...props
-}: ButtonProps) {
+export function Button({ className, variant, size, render, type, ...props }: ButtonProps) {
   // `type` is a native-button concern; don't leak it onto a composed <a>/<Link>.
   return useRender({
     render: render ?? <button type={type ?? "button"} />,

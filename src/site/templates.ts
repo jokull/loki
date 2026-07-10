@@ -89,7 +89,9 @@ export default function Members({ user }) {
       "customize the name, bio, and links in routes/index.tsx.",
     files: {
       "loki.config.json": `{ "writableModels": [] }`,
-      "styles.css": STYLES + `.card { text-align: center; }
+      "styles.css":
+        STYLES +
+        `.card { text-align: center; }
 .avatar { width: 88px; height: 88px; border-radius: 999px; background: #cf551d22;
   display: grid; place-items: center; font-size: 2rem; margin: 0 auto 1rem; }
 .links { display: flex; flex-direction: column; gap: .6rem; margin-top: 1.5rem; }

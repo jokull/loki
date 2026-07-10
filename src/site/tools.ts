@@ -22,33 +22,15 @@ import {
   type AssetManifest,
 } from "./store";
 import { transpileModule, buildClientBuild } from "./transpile";
-import {
-  BUILTIN_SPECIFIERS,
-  parseBareImports,
-  resolveDep,
-} from "./deps";
+import { BUILTIN_SPECIFIERS, parseBareImports, resolveDep } from "./deps";
 import { buildDraftBundle } from "./serve";
-import {
-  extractDocsFromFile,
-  publishSite,
-  validateDocuments,
-} from "./publish";
+import { extractDocsFromFile, publishSite, validateDocuments } from "./publish";
 import { getSchemaBundle } from "./schema-types";
 import { TEMPLATES, TEMPLATE_NAMES } from "./templates";
 import { runShell, resetDraft, formatShellResult } from "./shell";
 import { SITE_HELP } from "./help";
-import {
-  siteOrigin,
-  createSiteToken,
-  listSiteTokens,
-  revokeSiteToken,
-} from "../tenants";
-import {
-  setSecret,
-  listSecretNames,
-  deleteSecret,
-  validateSecretName,
-} from "../secrets";
+import { siteOrigin, createSiteToken, listSiteTokens, revokeSiteToken } from "../tenants";
+import { setSecret, listSecretNames, deleteSecret, validateSecretName } from "../secrets";
 import type { Bundle } from "./bundle";
 import {
   assetServingUrl,
@@ -68,8 +50,7 @@ function jsonText(value: unknown): SiteToolResult {
 /** Decode base64 (tolerating an optional data: URL prefix and whitespace). */
 function decodeBase64(input: string): Uint8Array {
   const comma = input.indexOf(",");
-  const body =
-    input.startsWith("data:") && comma !== -1 ? input.slice(comma + 1) : input;
+  const body = input.startsWith("data:") && comma !== -1 ? input.slice(comma + 1) : input;
   const clean = body.replace(/\s+/g, "");
   const binary = atob(clean);
   const bytes = new Uint8Array(binary.length);
@@ -78,10 +59,7 @@ function decodeBase64(input: string): Uint8Array {
 }
 
 /** Prefer a concrete response Content-Type; else infer from the path. */
-function resolveContentType(
-  headerValue: string | null,
-  path: string,
-): string {
+function resolveContentType(headerValue: string | null, path: string): string {
   const media = headerValue?.split(";")[0]?.trim().toLowerCase() ?? "";
   if (media && media !== "application/octet-stream") return media;
   return inferContentType(path);
@@ -113,7 +91,9 @@ function featureStub(env: Env, siteId: string) {
 }
 
 /** Render a feature schema (tables → columns) as a compact text block. */
-function formatSchema(schema: Record<string, Array<{ name: string; type: string; notnull: boolean; pk: boolean }>>): string {
+function formatSchema(
+  schema: Record<string, Array<{ name: string; type: string; notnull: boolean; pk: boolean }>>,
+): string {
   const tables = Object.keys(schema);
   if (tables.length === 0) return "(no feature tables yet)";
   return tables
@@ -147,10 +127,7 @@ export const SITE_TOOLS: SiteTool[] = [
       "query here, then paste the working document into a route's gql loader.",
     inputSchema: {
       query: z.string().describe("GraphQL query or introspection document"),
-      variables: z
-        .record(z.unknown())
-        .optional()
-        .describe("Query variables as a JSON object"),
+      variables: z.record(z.unknown()).optional().describe("Query variables as a JSON object"),
       includeDrafts: z
         .boolean()
         .optional()
@@ -179,7 +156,7 @@ export const SITE_TOOLS: SiteTool[] = [
       "args in a JSDoc comment), the orderBy/status enums, and the filter input types. " +
       "Nullability (`| null`), lists (`T[]`), nested linked records, and Structured Text " +
       "(`{ value, blocks, inlineBlocks, links }`) are rendered faithfully. These are the " +
-      "SAME types importable as `import type { BlogPostRecord, Query } from \"loki/schema\"` " +
+      'SAME types importable as `import type { BlogPostRecord, Query } from "loki/schema"` ' +
       "to annotate loaders and props. Regenerates automatically when the schema changes.",
     inputSchema: {},
     async handler(_args, { env, siteId }) {
@@ -191,20 +168,14 @@ export const SITE_TOOLS: SiteTool[] = [
     name: "site_write",
     description:
       "Create or overwrite a site file in the draft tree. TSX/TS/JSX/JS are transpiled immediately (sucrase, preact JSX); transpile errors are returned and the write is REJECTED. Other files (styles.css, *.graphql) are stored as-is. " +
-      "After a successful write, every gql`...` document in the file (and standalone *.graphql files) is VALIDATED against the live CMS schema; any problems come back in a `graphqlErrors` block (with precise messages like `Cannot query field \"x\" on type \"BlogPostRecord\". Did you mean \"y\"?`). These are NON-FATAL — the file is still saved so you can write a component before its query is finished — but fix them before publish_site, which hard-gates on the same validation. " +
+      'After a successful write, every gql`...` document in the file (and standalone *.graphql files) is VALIDATED against the live CMS schema; any problems come back in a `graphqlErrors` block (with precise messages like `Cannot query field "x" on type "BlogPostRecord". Did you mean "y"?`). These are NON-FATAL — the file is still saved so you can write a component before its query is finished — but fix them before publish_site, which hard-gates on the same validation. ' +
       "You may also `import` from ANY npm package (no allowlist): Loki resolves it via esm.sh at write time, snapshots a self-contained version-pinned copy, TEST-LOADS it in a throwaway workerd isolate to confirm it is supported, and returns a `resolvedDeps` block. Resolving a package for the FIRST time may take a few seconds (crawl + store + test-load). A package that is not found, too large, or not workerd-compatible (e.g. it needs a Node built-in like `node:fs`) is REJECTED with the reason and no pin is persisted. " +
-      "For typed authoring, read the `schema_types` tool output and `import type { BlogPostRecord } from \"loki/schema\"`.\n\n" +
+      'For typed authoring, read the `schema_types` tool output and `import type { BlogPostRecord } from "loki/schema"`.\n\n' +
       "The file contents go in the `source` parameter (`content` is accepted as an alias).",
     inputSchema: {
       path: z.string().describe("Repo-relative path, e.g. routes/index.tsx or styles.css"),
-      source: z
-        .string()
-        .optional()
-        .describe("Full file contents (alias: `content`)"),
-      content: z
-        .string()
-        .optional()
-        .describe("Alias for `source` — full file contents"),
+      source: z.string().optional().describe("Full file contents (alias: `content`)"),
+      content: z.string().optional().describe("Alias for `source` — full file contents"),
     },
     async handler({ path, source, content }, { env, siteId }) {
       if (source != null && content != null && source !== content) {
@@ -379,12 +350,8 @@ export const SITE_TOOLS: SiteTool[] = [
       "`url` is the exact string to reference. Records a DRAFT entry — publish to " +
       "go live.",
     inputSchema: {
-      path: z
-        .string()
-        .describe("public/… path, e.g. public/favicon.ico (serves at /favicon.ico)"),
-      base64: z
-        .string()
-        .describe("File bytes as base64 (a data: URL prefix is tolerated)"),
+      path: z.string().describe("public/… path, e.g. public/favicon.ico (serves at /favicon.ico)"),
+      base64: z.string().describe("File bytes as base64 (a data: URL prefix is tolerated)"),
       contentType: z
         .string()
         .optional()
@@ -468,9 +435,7 @@ export const SITE_TOOLS: SiteTool[] = [
       if (files.length) {
         sections.push(
           "Code files:\n" +
-            files
-              .map((f) => `  ${f.path}  (${f.source.length}b, ${f.updated_at})`)
-              .join("\n"),
+            files.map((f) => `  ${f.path}  (${f.source.length}b, ${f.updated_at})`).join("\n"),
         );
       }
       if (assets.length) {
@@ -496,9 +461,7 @@ export const SITE_TOOLS: SiteTool[] = [
     async handler({ path }, { env, siteId }) {
       if (path.startsWith(PUBLIC_PREFIX)) {
         const ok = await deleteAsset(env, siteId, path);
-        return ok
-          ? text(`Deleted asset ${path}.`)
-          : errorResult(`No such asset: ${path}`);
+        return ok ? text(`Deleted asset ${path}.`) : errorResult(`No such asset: ${path}`);
       }
       const ok = await deleteFile(env, siteId, path);
       return ok ? text(`Deleted ${path}.`) : errorResult(`No such file: ${path}`);
@@ -683,9 +646,7 @@ export const SITE_TOOLS: SiteTool[] = [
       "pipeline + publish_site; for content use graphql_query; for record/feature-DB " +
       "work use serverFns. (python3/js-exec/sqlite/curl are intentionally disabled.)",
     inputSchema: {
-      command: z
-        .string()
-        .describe("A shell command line, e.g. `grep -rn accent styles.css`"),
+      command: z.string().describe("A shell command line, e.g. `grep -rn accent styles.css`"),
     },
     async handler({ command }, { env, siteId }) {
       const result = await runShell(env, siteId, command);
@@ -724,7 +685,7 @@ export const SITE_TOOLS: SiteTool[] = [
     description:
       "Evolve this site's FEATURE database — the SQLite tables your app code reads and " +
       "writes (guestbooks, todos, orders, …), separate from the content models. Apply ONE " +
-      "named, versioned migration: `name` is a stable id (e.g. \"0001_create_posts\"), `up` " +
+      'named, versioned migration: `name` is a stable id (e.g. "0001_create_posts"), `up` ' +
       "is the SQL (CREATE TABLE / ALTER TABLE / CREATE INDEX; multiple statements separated " +
       "by `;`). Idempotent: a name that's already been applied is skipped, so it's safe to " +
       "re-run. Returns the resulting schema. Your serverFns/loaders then query these tables " +
@@ -786,7 +747,9 @@ export const SITE_TOOLS: SiteTool[] = [
         );
         return jsonText(r);
       } catch (err) {
-        return errorResult(`feature_query failed: ${err instanceof Error ? err.message : String(err)}`);
+        return errorResult(
+          `feature_query failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
       }
     },
   },
@@ -800,10 +763,7 @@ export const SITE_TOOLS: SiteTool[] = [
       "non-developer the keys to the content without the keys to the build. The token " +
       "is shown ONCE. Manage with list_editor_tokens / revoke_editor_token.",
     inputSchema: {
-      label: z
-        .string()
-        .optional()
-        .describe("A human label, e.g. the editor's name or role"),
+      label: z.string().optional().describe("A human label, e.g. the editor's name or role"),
     },
     async handler({ label }, { env, siteId }) {
       const { id, token } = await createSiteToken(env, siteId, label ?? null, "editor");
@@ -836,7 +796,8 @@ export const SITE_TOOLS: SiteTool[] = [
     inputSchema: {},
     async handler(_args, { env, siteId }) {
       const tokens = await listSiteTokens(env, siteId);
-      if (tokens.length === 0) return text("No editor tokens yet. Mint one with create_editor_token.");
+      if (tokens.length === 0)
+        return text("No editor tokens yet. Mint one with create_editor_token.");
       return text(
         tokens
           .map((t) => `${t.id}  ${t.role}  ${t.created_at}  ${t.label ?? "(no label)"}`)
@@ -858,7 +819,7 @@ export const SITE_TOOLS: SiteTool[] = [
     description:
       "Store an encrypted secret for this site (owner only). Use for third-party " +
       "API keys your server code needs — Stripe, Resend, OpenAI, a webhook signing " +
-      "secret, etc. Your serverFns/loaders read it with `await env.SECRETS.get(\"NAME\")` " +
+      'secret, etc. Your serverFns/loaders read it with `await env.SECRETS.get("NAME")` ' +
       "(server-side only — it is NEVER in the browser build). Values are AES-GCM " +
       "encrypted at rest under a per-site key; only the NAME is ever shown back. " +
       "Setting an existing name overwrites it. Name must look like an env var " +
@@ -884,8 +845,7 @@ export const SITE_TOOLS: SiteTool[] = [
   {
     name: "list_secrets",
     description:
-      "List this site's secret NAMES (never the values) with when each was set. " +
-      "Owner only.",
+      "List this site's secret NAMES (never the values) with when each was set. " + "Owner only.",
     inputSchema: {},
     async handler(_args, { env, siteId }) {
       const secrets = await listSecretNames(env, siteId);
@@ -893,9 +853,7 @@ export const SITE_TOOLS: SiteTool[] = [
         return text("No secrets set. Add one with set_secret.");
       }
       return text(
-        secrets
-          .map((s) => `${s.name}  (set ${s.created_at}, updated ${s.updated_at})`)
-          .join("\n"),
+        secrets.map((s) => `${s.name}  (set ${s.created_at}, updated ${s.updated_at})`).join("\n"),
       );
     },
   },
@@ -936,25 +894,37 @@ export const SITE_TOOLS: SiteTool[] = [
       // Content models (per-site).
       try {
         const intro = await cmsExecuteFor(
-          env, siteId, "{ __schema { queryType { name } } }", {}, false,
+          env,
+          siteId,
+          "{ __schema { queryType { name } } }",
+          {},
+          false,
         );
         status.contentApi = (intro as any)?.data ? "ok" : "unavailable";
-      } catch { status.contentApi = "unavailable"; }
+      } catch {
+        status.contentApi = "unavailable";
+      }
       // Tenant-only: feature schema, secrets, users, recent errors.
       if (siteId !== DEFAULT_SITE_ID) {
         try {
           const { schema } = JSON.parse(await featureStub(env, siteId).schema());
           status.featureTables = Object.keys(schema);
-        } catch { status.featureTables = []; }
+        } catch {
+          status.featureTables = [];
+        }
         status.secrets = (await listSecretNames(env, siteId)).map((s) => s.name);
         try {
           const users = await featureStub(env, siteId).listUsers();
           status.users = users.length;
-        } catch { status.users = 0; }
+        } catch {
+          status.users = 0;
+        }
         try {
           const logs = await featureStub(env, siteId).readLogs(100);
           status.recentErrors = logs.filter((l) => l.level === "error").length;
-        } catch { status.recentErrors = 0; }
+        } catch {
+          status.recentErrors = 0;
+        }
       }
       return jsonText(status);
     },
@@ -971,10 +941,13 @@ export const SITE_TOOLS: SiteTool[] = [
     },
     async handler({ limit }, { env, siteId }) {
       if (siteId === DEFAULT_SITE_ID) {
-        return text("site_logs is available for tenant sites (a {sub}.loftur.app), not the default site.");
+        return text(
+          "site_logs is available for tenant sites (a {sub}.loftur.app), not the default site.",
+        );
       }
       const logs = await featureStub(env, siteId).readLogs(limit ?? 50);
-      if (logs.length === 0) return text("No logs yet. Errors and env.LOG.write() lines appear here.");
+      if (logs.length === 0)
+        return text("No logs yet. Errors and env.LOG.write() lines appear here.");
       return text(
         logs
           .map((l) => `${l.ts}  [${l.level}]${l.source ? " " + l.source : ""}  ${l.message}`)
@@ -992,9 +965,7 @@ export const SITE_TOOLS: SiteTool[] = [
     async handler(_args, { env, siteId }) {
       const users = await featureStub(env, siteId).listUsers();
       if (users.length === 0) return text("No users have signed in yet.");
-      return text(
-        users.map((u) => `${u.email}  ${u.role}  (${u.id})  ${u.created_at}`).join("\n"),
-      );
+      return text(users.map((u) => `${u.email}  ${u.role}  (${u.id})  ${u.created_at}`).join("\n"));
     },
   },
   {
@@ -1027,14 +998,17 @@ export const SITE_TOOLS: SiteTool[] = [
       "Writes all the template's files (overwriting matching paths), then preview_site / " +
       "publish_site as usual. Call with no template to list options.",
     inputSchema: {
-      template: z.string().optional().describe(`One of: ${TEMPLATE_NAMES.join(", ")}`),
+      template: z
+        .string()
+        .optional()
+        .describe(`One of: ${TEMPLATE_NAMES.join(", ")}`),
     },
     async handler({ template }, { env, siteId }) {
       if (!template) {
         return text(
           "Available templates:\n" +
             TEMPLATE_NAMES.map((n) => `- ${n}: ${TEMPLATES[n].description}`).join("\n") +
-            "\n\nCall scaffold_template({ template: \"<name>\" }) to write one.",
+            '\n\nCall scaffold_template({ template: "<name>" }) to write one.',
         );
       }
       const tpl = TEMPLATES[template];
@@ -1056,7 +1030,7 @@ export const SITE_TOOLS: SiteTool[] = [
           path,
           source,
           result.code ?? null,
-          clientBuild.ok ? clientBuild.clientCompiled ?? null : null,
+          clientBuild.ok ? (clientBuild.clientCompiled ?? null) : null,
         );
         written.push(path);
       }

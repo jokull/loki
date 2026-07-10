@@ -38,7 +38,11 @@ class SqlStorageStatement {
   }> {
     const cursor = this.sqlStore.exec(this.sql, ...(this.params as any[]));
     const results = cursor.toArray() as T[];
-    return { results, success: true, meta: { rows_read: cursor.rowsRead, rows_written: cursor.rowsWritten } };
+    return {
+      results,
+      success: true,
+      meta: { rows_read: cursor.rowsRead, rows_written: cursor.rowsWritten },
+    };
   }
 
   /** D1: value-array rows (no column keys). */
@@ -57,7 +61,10 @@ class SqlStorageStatement {
   async run(): Promise<{ success: true; meta: Record<string, unknown> }> {
     const cursor = this.sqlStore.exec(this.sql, ...(this.params as any[]));
     cursor.toArray(); // drain
-    return { success: true, meta: { rows_read: cursor.rowsRead, rows_written: cursor.rowsWritten } };
+    return {
+      success: true,
+      meta: { rows_read: cursor.rowsRead, rows_written: cursor.rowsWritten },
+    };
   }
 }
 
@@ -121,15 +128,11 @@ export class TenantDB extends DurableObject<Env> {
   /** Lazily build the agent-cms handler over this DO's SQLite, ensuring schema. */
   private async getCms(): Promise<CmsHandler> {
     if (this.cms) return this.cms;
-    const db = new SqlStorageD1(
-      this.sqlStore,
-      this.ctx.storage,
-    ) as unknown as D1Database;
+    const db = new SqlStorageD1(this.sqlStore, this.ctx.storage) as unknown as D1Database;
     const cms = createCMSHandler({
       bindings: {
         db,
-        environment:
-          this.env.ENVIRONMENT === "development" ? "development" : "production",
+        environment: this.env.ENVIRONMENT === "development" ? "development" : "production",
         writeKey: this.env.WRITE_KEY,
         // Shared R2 for content assets (keyed by unique record/asset ids). A
         // per-tenant prefix is a v2.1 refinement.
@@ -304,9 +307,7 @@ export class TenantFeatureDB extends DurableObject<Env> {
     let failed: { name: string; error: string } | undefined;
     for (const m of migrations) {
       const already =
-        this.sqlStore
-          .exec("SELECT 1 FROM _migrations WHERE name = ?", m.name)
-          .toArray().length > 0;
+        this.sqlStore.exec("SELECT 1 FROM _migrations WHERE name = ?", m.name).toArray().length > 0;
       if (already) {
         skipped.push(m.name);
         continue;
@@ -340,9 +341,7 @@ export class TenantFeatureDB extends DurableObject<Env> {
     );
     // Backfill the role column on tables created before roles existed.
     try {
-      this.sqlStore.exec(
-        "ALTER TABLE _auth_users ADD COLUMN role TEXT NOT NULL DEFAULT 'member'",
-      );
+      this.sqlStore.exec("ALTER TABLE _auth_users ADD COLUMN role TEXT NOT NULL DEFAULT 'member'");
     } catch {
       /* column already exists */
     }
@@ -356,11 +355,7 @@ export class TenantFeatureDB extends DurableObject<Env> {
    */
   async authUpsertUser(email: string, newId: string): Promise<{ id: string; role: string }> {
     this.ensureAuthUsers();
-    this.sqlStore.exec(
-      "INSERT OR IGNORE INTO _auth_users (id, email) VALUES (?, ?)",
-      newId,
-      email,
-    );
+    this.sqlStore.exec("INSERT OR IGNORE INTO _auth_users (id, email) VALUES (?, ?)", newId, email);
     const rows = this.sqlStore
       .exec("SELECT id, role FROM _auth_users WHERE email = ?", email)
       .toArray();
@@ -373,14 +368,14 @@ export class TenantFeatureDB extends DurableObject<Env> {
     this.ensureAuthUsers();
     this.sqlStore.exec("UPDATE _auth_users SET role = ? WHERE email = ?", role, email);
     return (
-      this.sqlStore
-        .exec("SELECT 1 FROM _auth_users WHERE email = ?", email)
-        .toArray().length > 0
+      this.sqlStore.exec("SELECT 1 FROM _auth_users WHERE email = ?", email).toArray().length > 0
     );
   }
 
   /** List end-users (owner tool). */
-  async listUsers(): Promise<Array<{ id: string; email: string; role: string; created_at: string }>> {
+  async listUsers(): Promise<
+    Array<{ id: string; email: string; role: string; created_at: string }>
+  > {
     this.ensureAuthUsers();
     return this.sqlStore
       .exec("SELECT id, email, role, created_at FROM _auth_users ORDER BY created_at DESC")
@@ -406,9 +401,7 @@ export class TenantFeatureDB extends DurableObject<Env> {
       source ? String(source).slice(0, 64) : null,
       String(message).slice(0, 2000),
     );
-    this.sqlStore.exec(
-      "DELETE FROM _logs WHERE id <= (SELECT MAX(id) FROM _logs) - 500",
-    );
+    this.sqlStore.exec("DELETE FROM _logs WHERE id <= (SELECT MAX(id) FROM _logs) - 500");
   }
 
   /** Read recent log lines (newest first) for the site_logs tool / dashboard. */
@@ -452,11 +445,7 @@ export class TenantFeatureDB extends DurableObject<Env> {
    * Run an agent-supplied SQL query for inspection/seeding (feature_query tool).
    * Returns JSON { columns, rows } for reads, or { changes } for writes.
    */
-  async query(
-    sql: string,
-    params: unknown[] = [],
-    write: boolean,
-  ): Promise<string> {
+  async query(sql: string, params: unknown[] = [], write: boolean): Promise<string> {
     const cursor = this.sqlStore.exec(sql, ...(params as any[]));
     if (write) {
       cursor.toArray();

@@ -60,9 +60,7 @@ export async function buildDraftClientBundle(env: Env, siteId: string): Promise<
 export async function sha256Hex(input: string): Promise<string> {
   const data = new TextEncoder().encode(input);
   const digest = await crypto.subtle.digest("SHA-256", data);
-  return [...new Uint8Array(digest)]
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 /** Deterministic serialization of a bundle for content addressing. */
@@ -97,9 +95,7 @@ function parseConfigList(bundle: Bundle, field: string): string[] {
   try {
     const cfg = JSON.parse(raw) as Record<string, unknown>;
     const list = cfg?.[field];
-    return Array.isArray(list)
-      ? list.filter((m): m is string => typeof m === "string")
-      : [];
+    return Array.isArray(list) ? list.filter((m): m is string => typeof m === "string") : [];
   } catch {
     return [];
   }
@@ -219,12 +215,18 @@ async function runSite(
     return await stub.getEntrypoint().fetch(forwarded);
   } catch (err) {
     const message = err instanceof Error ? (err.stack ?? err.message) : String(err);
-    const path = (() => { try { return new URL(request.url).pathname; } catch { return "?"; } })();
+    const path = (() => {
+      try {
+        return new URL(request.url).pathname;
+      } catch {
+        return "?";
+      }
+    })();
     ctx.waitUntil(logLine(env, siteId, "error", `render ${path}`, message));
-    return new Response(
-      `Site worker error (loader ${loaderId}):\n${message}`,
-      { status: 500, headers: { "content-type": "text/plain; charset=utf-8" } },
-    );
+    return new Response(`Site worker error (loader ${loaderId}):\n${message}`, {
+      status: 500,
+      headers: { "content-type": "text/plain; charset=utf-8" },
+    });
   }
 }
 

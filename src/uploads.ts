@@ -21,10 +21,12 @@ export function uploadKey(siteId: string, key: string): string {
 
 /** Reject traversal / absolute / weird keys. */
 function cleanKey(raw: string): string | null {
-  const key = String(raw || "").replace(/^\/+/, "").trim();
+  const key = String(raw || "")
+    .replace(/^\/+/, "")
+    .trim();
   if (!key || key.length > 256) return null;
   if (key.includes("..") || key.includes("//")) return null;
-  if (!/^[A-Za-z0-9._\-\/]+$/.test(key)) return null;
+  if (!/^[A-Za-z0-9._\-/]+$/.test(key)) return null;
   return key;
 }
 
@@ -83,11 +85,7 @@ export class UploadsEntrypoint extends WorkerEntrypoint<Env, { siteId?: string }
 }
 
 /** Serve a public user upload (`/__uploads/<key>`) from R2 for a site. */
-export async function serveUpload(
-  env: Env,
-  siteId: string,
-  key: string,
-): Promise<Response> {
+export async function serveUpload(env: Env, siteId: string, key: string): Promise<Response> {
   const clean = cleanKey(key);
   if (!clean) return new Response("Bad key", { status: 400 });
   const obj = await env.ASSETS.get(uploadKey(siteId, clean));

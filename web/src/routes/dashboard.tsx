@@ -59,7 +59,9 @@ function KeyReveal({ subdomain, apiKey }: { subdomain: string; apiKey: string })
           <ChevronRight /> MCP config
         </CollapsibleTrigger>
         <CollapsiblePanel>
-          <CodeBlock selectAll className="mt-2">{mcpConfig(subdomain, apiKey)}</CodeBlock>
+          <CodeBlock selectAll className="mt-2">
+            {mcpConfig(subdomain, apiKey)}
+          </CodeBlock>
         </CollapsiblePanel>
       </Collapsible>
     </div>
@@ -76,7 +78,9 @@ function Dashboard() {
         </Link>
         <div className="flex items-center gap-3">
           <span className="hidden text-sm text-muted-foreground sm:inline">{email}</span>
-          <Button variant="ghost" size="sm" render={<Link to="/auth/logout" />}>Log out</Button>
+          <Button variant="ghost" size="sm" render={<Link to="/auth/logout" />}>
+            Log out
+          </Button>
         </div>
       </header>
 
@@ -120,7 +124,7 @@ function ClaimSite() {
       else {
         setClaimed({ subdomain: r.subdomain, apiKey: r.apiKey });
         setSubdomain("");
-        router.invalidate();
+        void router.invalidate();
       }
     } finally {
       setBusy(false);
@@ -161,11 +165,7 @@ function SiteCard({ site }: { site: SiteRow }) {
   const [panel, setPanel] = useState<Panel>(null);
   const toggle = (p: Panel) => setPanel((cur) => (cur === p ? null : p));
   const tab = (p: Exclude<Panel, null>, label: string) => (
-    <Button
-      variant={panel === p ? "secondary" : "outline"}
-      size="sm"
-      onClick={() => toggle(p)}
-    >
+    <Button variant={panel === p ? "secondary" : "outline"} size="sm" onClick={() => toggle(p)}>
       {label}
     </Button>
   );
@@ -228,7 +228,12 @@ function RotateKey({ site }: { site: SiteRow }) {
 }
 
 function Tokens({ site }: { site: SiteRow }) {
-  const [tokens, setTokens] = useState<Array<{ id: string; role: string; label: string | null; created_at: string }> | null>(null);
+  const [tokens, setTokens] = useState<Array<{
+    id: string;
+    role: string;
+    label: string | null;
+    created_at: string;
+  }> | null>(null);
   const [label, setLabel] = useState("");
   const [minted, setMinted] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -237,7 +242,7 @@ function Tokens({ site }: { site: SiteRow }) {
     const r = await listTokensFn({ data: { siteId: site.id } });
     setTokens(r.tokens as any);
   }
-  if (tokens === null) load();
+  if (tokens === null) void load();
 
   async function mint(e: React.FormEvent) {
     e.preventDefault();
@@ -271,7 +276,9 @@ function Tokens({ site }: { site: SiteRow }) {
           placeholder="Label (e.g. Jane, content)"
           className="min-w-0 flex-1"
         />
-        <Button variant="sky" type="submit" disabled={busy}>Mint editor token</Button>
+        <Button variant="sky" type="submit" disabled={busy}>
+          Mint editor token
+        </Button>
       </form>
       {minted && (
         <div className="flex flex-col gap-1.5">
@@ -288,7 +295,14 @@ function Tokens({ site }: { site: SiteRow }) {
                 {t.label || <span className="text-muted-foreground">(no label)</span>}
                 <span className="text-muted-foreground">· {t.created_at}</span>
               </span>
-              <Button variant="ghost" size="sm" className="text-destructive hover:bg-destructive/10" onClick={() => revoke(t.id)}>Revoke</Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-destructive hover:bg-destructive/10"
+                onClick={() => revoke(t.id)}
+              >
+                Revoke
+              </Button>
             </div>
           ))}
         </div>
@@ -298,7 +312,11 @@ function Tokens({ site }: { site: SiteRow }) {
 }
 
 function Secrets({ site }: { site: SiteRow }) {
-  const [secrets, setSecrets] = useState<Array<{ name: string; created_at: string; updated_at: string }> | null>(null);
+  const [secrets, setSecrets] = useState<Array<{
+    name: string;
+    created_at: string;
+    updated_at: string;
+  }> | null>(null);
   const [name, setName] = useState("");
   const [value, setValue] = useState("");
   const [err, setErr] = useState<string | null>(null);
@@ -308,7 +326,7 @@ function Secrets({ site }: { site: SiteRow }) {
     const r = await listSecretsFn({ data: { siteId: site.id } });
     setSecrets(r.secrets as any);
   }
-  if (secrets === null) load();
+  if (secrets === null) void load();
 
   async function save(e: React.FormEvent) {
     e.preventDefault();
@@ -317,7 +335,11 @@ function Secrets({ site }: { site: SiteRow }) {
     try {
       const r = await setSecretFn({ data: { siteId: site.id, name, value } });
       if (!r.ok) setErr(r.error);
-      else { setName(""); setValue(""); await load(); }
+      else {
+        setName("");
+        setValue("");
+        await load();
+      }
     } finally {
       setBusy(false);
     }
@@ -348,7 +370,9 @@ function Secrets({ site }: { site: SiteRow }) {
           placeholder="value"
           className="min-w-0 flex-1"
         />
-        <Button variant="sky" type="submit" disabled={busy || !name || !value}>Set</Button>
+        <Button variant="sky" type="submit" disabled={busy || !name || !value}>
+          Set
+        </Button>
       </form>
       {err && <Callout variant="error">{err}</Callout>}
       {secrets && secrets.length > 0 && (
@@ -358,7 +382,14 @@ function Secrets({ site }: { site: SiteRow }) {
               <span className="font-mono">
                 {s.name} <span className="text-muted-foreground">· updated {s.updated_at}</span>
               </span>
-              <Button variant="ghost" size="sm" className="text-destructive hover:bg-destructive/10" onClick={() => del(s.name)}>Delete</Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-destructive hover:bg-destructive/10"
+                onClick={() => del(s.name)}
+              >
+                Delete
+              </Button>
             </div>
           ))}
         </div>

@@ -279,11 +279,8 @@ export function formatShellResult(command: string, r: ShellResult): string {
   const footer: string[] = [];
   if (r.stderr.trim()) footer.push(`stderr:\n${r.stderr.replace(/\n$/, "")}`);
   footer.push(`exit: ${r.exitCode}`);
-  if (r.changedFiles.length)
-    footer.push(`changedFiles: ${r.changedFiles.join(", ")}`);
-  if (r.deletedFiles.length)
-    footer.push(`deletedFiles: ${r.deletedFiles.join(", ")}`);
-  if (r.warnings.length)
-    footer.push(`warnings:\n  - ${r.warnings.join("\n  - ")}`);
+  if (r.changedFiles.length) footer.push(`changedFiles: ${r.changedFiles.join(", ")}`);
+  if (r.deletedFiles.length) footer.push(`deletedFiles: ${r.deletedFiles.join(", ")}`);
+  if (r.warnings.length) footer.push(`warnings:\n  - ${r.warnings.join("\n  - ")}`);
   return `$ ${command}\n\n${parts.join("\n")}\n\n---\n${footer.join("\n")}`;
 }

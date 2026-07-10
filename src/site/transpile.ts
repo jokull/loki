@@ -73,7 +73,7 @@ export function transpileModule(path: string, source: string): TranspileResult {
       return {
         ok: false,
         error:
-          'loki/schema is types-only — it has no runtime module. Use a type-only ' +
+          "loki/schema is types-only — it has no runtime module. Use a type-only " +
           'import: `import type { BlogPostRecord } from "loki/schema"`. It exposes ' +
           "content types (record interfaces, the Query root, filter/orderBy) for " +
           "annotating loaders and props; read the exact shapes with the " +
@@ -89,13 +89,11 @@ export function transpileModule(path: string, source: string): TranspileResult {
 
 // Matches a surviving `loki/schema` module specifier in `from "…"` /
 // `import(…)` position (a genuine value import — type-only imports are erased).
-const SCHEMA_SPECIFIER_RE =
-  /(\bfrom\s*|\bimport\s*\(\s*)(["'])loki\/schema\2/;
+const SCHEMA_SPECIFIER_RE = /(\bfrom\s*|\bimport\s*\(\s*)(["'])loki\/schema\2/;
 
 // Named top-level exports (const/let/var/function). Re-export lists and default
 // exports are intentionally out of scope — serverFns must be NAMED exports.
-const EXPORT_NAME_RE =
-  /\bexport\s+(?:async\s+)?(?:const|let|var|function)\s+([A-Za-z_$][\w$]*)/g;
+const EXPORT_NAME_RE = /\bexport\s+(?:async\s+)?(?:const|let|var|function)\s+([A-Za-z_$][\w$]*)/g;
 
 // A serverFn export in its documented authored form:
 //   export const NAME = serverFn({ method?: "..." }).validator(...).handler(...)
@@ -135,11 +133,7 @@ function synthesizeClientStub(path: string, fns: ServerFnExport[]): string {
       `export const ${f.name} = __lokiClientServerFn(` +
       `${JSON.stringify(path + "#" + f.name)},${JSON.stringify(f.method)});`,
   );
-  return (
-    'import { __lokiClientServerFn } from "loki/runtime";\n' +
-    lines.join("\n") +
-    "\n"
-  );
+  return 'import { __lokiClientServerFn } from "loki/runtime";\n' + lines.join("\n") + "\n";
 }
 
 /**
@@ -228,10 +222,7 @@ function withServerFnIds(path: string, code: string): string {
   }
   if (names.length === 0) return code;
   const entries = names
-    .map(
-      (n) =>
-        `[${JSON.stringify(path + "#" + n)},(typeof ${n}!=="undefined"?${n}:null)]`,
-    )
+    .map((n) => `[${JSON.stringify(path + "#" + n)},(typeof ${n}!=="undefined"?${n}:null)]`)
     .join(",");
   const epilogue =
     `\n;(function(){var __f=[${entries}];` +

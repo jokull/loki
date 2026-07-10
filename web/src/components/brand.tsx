@@ -13,13 +13,7 @@ export function GithubMark(props: React.SVGProps<SVGSVGElement>) {
  * Loftur wordmark. The mark is a small "lofted" tile — a rounded square tilted a
  * few degrees with a baby-blue Sky glow, the runtime's one accent moment.
  */
-export function Brand({
-  className,
-  markOnly = false,
-}: {
-  className?: string;
-  markOnly?: boolean;
-}) {
+export function Brand({ className, markOnly = false }: { className?: string; markOnly?: boolean }) {
   return (
     <span className={cn("inline-flex items-center gap-2 font-semibold tracking-tight", className)}>
       <span

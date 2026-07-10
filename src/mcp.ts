@@ -6,10 +6,7 @@
 // schema ops pass the migration guard before being forwarded.
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import {
-  CallToolRequestSchema,
-  ListToolsRequestSchema,
-} from "@modelcontextprotocol/sdk/types.js";
+import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { createMcpHandler } from "agents/mcp";
 import { z } from "zod";
 import type { Env } from "./env";
@@ -28,11 +25,25 @@ import { DEFAULT_SITE_ID } from "./site/store";
 const EDITOR_SITE_TOOLS = new Set(["graphql_query", "schema_types"]);
 const EDITOR_CMS_TOOLS = new Set([
   "schema_info",
-  "create_record", "update_record", "delete_record", "get_record",
-  "query_records", "bulk_create_records", "patch_blocks", "remove_block",
-  "set_publish_status", "schedule", "record_versions", "reorder_records",
-  "create_asset_upload_url", "upload_asset", "import_asset_from_url",
-  "list_assets", "replace_asset", "search_content", "get_preview_url",
+  "create_record",
+  "update_record",
+  "delete_record",
+  "get_record",
+  "query_records",
+  "bulk_create_records",
+  "patch_blocks",
+  "remove_block",
+  "set_publish_status",
+  "schedule",
+  "record_versions",
+  "reorder_records",
+  "create_asset_upload_url",
+  "upload_asset",
+  "import_asset_from_url",
+  "list_assets",
+  "replace_asset",
+  "search_content",
+  "get_preview_url",
   "get_site_settings",
 ]);
 function editorAllows(name: string): boolean {
@@ -105,26 +116,21 @@ function buildServer(
   siteId: string,
   role: "owner" | "editor",
 ): Server {
-  const server = new Server(
-    { name: "loftur", version: "0.1.0" },
-    { capabilities: { tools: {} } },
-  );
+  const server = new Server({ name: "loftur", version: "0.1.0" }, { capabilities: { tools: {} } });
   const isEditor = role === "editor";
 
   server.setRequestHandler(ListToolsRequestSchema, async () => {
-    const siteToolDefs = SITE_TOOLS.filter(
-      (t) => !isEditor || EDITOR_SITE_TOOLS.has(t.name),
-    ).map((t) => ({
-      name: t.name,
-      description: t.description,
-      inputSchema: shapeToJsonSchema(t.inputSchema) as any,
-    }));
+    const siteToolDefs = SITE_TOOLS.filter((t) => !isEditor || EDITOR_SITE_TOOLS.has(t.name)).map(
+      (t) => ({
+        name: t.name,
+        description: t.description,
+        inputSchema: shapeToJsonSchema(t.inputSchema) as any,
+      }),
+    );
     let cmsTools: any[] = [];
     try {
       const all = await listCmsTools(env, DEFAULT_SITE_ID);
-      cmsTools = isEditor
-        ? all.filter((t) => EDITOR_CMS_TOOLS.has(t.name))
-        : all;
+      cmsTools = isEditor ? all.filter((t) => EDITOR_CMS_TOOLS.has(t.name)) : all;
     } catch (err) {
       // Surface CMS bridge failure as a pseudo-tool so tools/list still returns
       // Loki's own tools rather than 500-ing the whole endpoint.
@@ -157,9 +163,7 @@ function buildServer(
       };
     }
 
-    const siteTool: SiteTool | undefined = SITE_TOOLS.find(
-      (t) => t.name === name,
-    );
+    const siteTool: SiteTool | undefined = SITE_TOOLS.find((t) => t.name === name);
     if (siteTool) {
       const parsed = z.object(siteTool.inputSchema).safeParse(args);
       if (!parsed.success) {

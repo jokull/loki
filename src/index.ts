@@ -16,11 +16,7 @@ const APEX = "loftur.app";
 
 /** Resolve the effective host (with a dev override header for pre-DNS testing). */
 function effectiveHost(request: Request, url: URL): string {
-  return (
-    request.headers.get("x-loftur-host") ||
-    url.hostname ||
-    ""
-  ).toLowerCase();
+  return (request.headers.get("x-loftur-host") || url.hostname || "").toLowerCase();
 }
 
 /** Friendly 404 for an unclaimed {sub}.loftur.app. */
@@ -66,10 +62,7 @@ export class GraphqlEntrypoint extends WorkerEntrypoint<
     try {
       payload = (await request.json()) as typeof payload;
     } catch {
-      return Response.json(
-        { errors: [{ message: "Invalid JSON body" }] },
-        { status: 400 },
-      );
+      return Response.json({ errors: [{ message: "Invalid JSON body" }] }, { status: 400 });
     }
     if (!payload.query) {
       return Response.json({ errors: [{ message: "Missing 'query'" }] });
@@ -144,11 +137,7 @@ async function serveCmsUpload(request: Request, env: Env): Promise<Response> {
  * uses. The PATCH body is read once here and replayed into the forwarded
  * request so agent-cms still receives it.
  */
-async function guardedCmsForward(
-  request: Request,
-  env: Env,
-  url: URL,
-): Promise<Response> {
+async function guardedCmsForward(request: Request, env: Env, url: URL): Promise<Response> {
   const method = request.method.toUpperCase();
   if (method !== "DELETE" && method !== "PATCH") {
     return getCms(env, url.origin).fetch(request);
@@ -308,7 +297,7 @@ export default {
     let siteId = DEFAULT_SITE_ID;
     let isTenant = false;
     if (host.endsWith(`.${APEX}`)) {
-      const sub = host.slice(0, host.length - (`.${APEX}`).length);
+      const sub = host.slice(0, host.length - `.${APEX}`.length);
       const site = await getSiteBySubdomain(env, sub);
       if (!site) return unknownSubdomain(sub);
       siteId = site.id;
@@ -343,8 +332,7 @@ export default {
     try {
       return await serveSite(env, ctx, request, siteId);
     } catch (err) {
-      const message =
-        err instanceof Error ? (err.stack ?? err.message) : String(err);
+      const message = err instanceof Error ? (err.stack ?? err.message) : String(err);
       return new Response(`Loftur serve error:\n${message}`, {
         status: 500,
         headers: { "content-type": "text/plain; charset=utf-8" },
