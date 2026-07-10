@@ -34,14 +34,15 @@ function Home() {
       </header>
 
       <section className="stack" style={{ gap: "1.1rem", paddingTop: "1rem" }}>
-        <p className="eyebrow">Agent-native site platform on Cloudflare</p>
-        <h1 style={{ fontSize: "clamp(2.1rem, 6vw, 3.6rem)", margin: 0, maxWidth: "17ch" }}>
-          Vibe-code a real site. Schema, content, auth and all.
+        <p className="eyebrow">Open-source agent-native runtime · Cloudflare Workers</p>
+        <h1 style={{ fontSize: "clamp(2.1rem, 6vw, 3.6rem)", margin: 0, maxWidth: "18ch" }}>
+          Point any agent at a subdomain. It ships a real site.
         </h1>
-        <p className="muted" style={{ fontSize: "1.12rem", maxWidth: "54ch" }}>
-          Most AI builders one-shot a good-looking page. Loftur one-shots the whole
-          backend over MCP — a real content schema, a per-site database, routes,
-          islands, auth, and secrets — then lets you hand editors a scoped token.
+        <p className="muted" style={{ fontSize: "1.12rem", maxWidth: "56ch" }}>
+          Loftur is the runtime, not another chat box. Bring Claude Code, Openclaw,
+          your own — any MCP agent — and it builds a live site at {"{you}"}.loftur.app
+          with auth, a per-site database, email, secrets, and mediated outbound already
+          wired in. Not generated boilerplate — powers the runtime hands every site for free.
         </p>
         <div className="row">
           <Link to="/login" className="btn primary">Start building</Link>
@@ -76,6 +77,19 @@ function Home() {
             </div>
           ))}
         </div>
+      </section>
+
+      <section className="card between" style={{ alignItems: "center" }}>
+        <div>
+          <h2 style={{ fontSize: "1.2rem", margin: "0 0 .2rem" }}>Or run it yourself</h2>
+          <p className="muted small" style={{ margin: 0, maxWidth: "48ch" }}>
+            Loftur is open source. Deploy the whole runtime to your own Cloudflare
+            account and serve tenants under your own domain — no lock-in.
+          </p>
+        </div>
+        <a href="https://github.com/jokull/loftur" target="_blank" rel="noreferrer" className="btn">
+          Self-host on GitHub
+        </a>
       </section>
 
       <section className="card between" style={{ alignItems: "center" }}>

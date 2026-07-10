@@ -30,6 +30,12 @@
       "binding": "LOADER"
     }
   ],
+  "services": [
+    {
+      "binding": "WEB",
+      "service": "loftur-web"
+    }
+  ],
   "r2_buckets": [
     {
       "binding": "ASSETS",

@@ -290,6 +290,16 @@ export default {
     // per-subdomain wildcard DNS. (The branded {sub}.loftur.app/mcp also works.)
     if (host === APEX || host === `www.${APEX}`) {
       if (pathname === "/mcp") return handleMcp(request, env, ctx);
+      // Programmatic control-plane surfaces stay on loki: the /api/* JSON API
+      // (site signup returns an apiKey) and /health. Everything else at the apex
+      // — the marketing site, /login, /dashboard, /auth/* — is the loftur-web
+      // control plane, reached via the WEB service binding (no DNS cutover; /mcp
+      // and every *.loftur.app tenant remain served directly here). /__* admin
+      // routes already returned above. Falls back to the in-worker landing in dev.
+      if (pathname === "/health" || pathname.startsWith("/api/")) {
+        return handleControlPlane(request, env);
+      }
+      if (env.WEB) return env.WEB.fetch(request);
       return handleControlPlane(request, env);
     }
 

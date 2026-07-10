@@ -25,7 +25,7 @@ async function main() {
   // 1. landing + login render
   const home = await fetch(WEB + "/");
   const homeText = await home.text();
-  ok("landing renders (200, hero copy)", home.status === 200 && /Vibe-code a real site/.test(homeText));
+  ok("landing renders (200, hero copy)", home.status === 200 && /Point any agent at a subdomain/.test(homeText));
   const login = await fetch(WEB + "/login");
   ok("login page renders", login.status === 200 && /sign-in link/i.test(await login.text()));
 

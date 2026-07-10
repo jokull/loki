@@ -57,6 +57,14 @@ export interface Env {
     }): Promise<{ messageId?: string }>;
   };
   ENVIRONMENT?: "production" | "development";
+  /**
+   * Service binding to the `loftur-web` worker (TanStack Start control plane +
+   * marketing). Apex (loftur.app) root traffic — everything except /mcp and the
+   * WRITE_KEY-gated /__* admin routes — is forwarded here. Keeping loki on the
+   * apex custom domain and proxying avoids a DNS cutover; `/mcp` and every
+   * *.loftur.app tenant stay served directly by loki.
+   */
+  WEB?: Fetcher;
 }
 
 export type CmsHandler = ReturnType<typeof createCMSHandler>;
