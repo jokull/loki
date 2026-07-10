@@ -29,8 +29,11 @@ export const TEMPLATES: Record<string, Template> = {
       "loki.config.json": `{ "writableModels": [] }`,
       "styles.css": STYLES,
       "app.tsx": `export const head = { title: "Members" };\n`,
-      "routes/index.tsx": `export async function loader({ user }) { return { user: user || null }; }
-export default function Home({ user }) {
+      "routes/index.tsx": `export async function loader({ user, request }) {
+  const sent = new URL(request.url).searchParams.get("sent") === "1";
+  return { user: user || null, sent };
+}
+export default function Home({ user, sent }) {
   if (user) {
     return (
       <main class="wrap">
@@ -43,10 +46,12 @@ export default function Home({ user }) {
   return (
     <main class="wrap">
       <h1>Members only</h1>
-      <p>Sign in and we'll email you a magic link — no password.</p>
+      {sent
+        ? <p><strong>Check your email</strong> — we sent you a sign-in link. It expires in 15 minutes.</p>
+        : <p>Sign in and we'll email you a magic link — no password.</p>}
       <form method="post" action="/login">
         <input name="email" type="email" placeholder="you@example.com" required />
-        <button>Email me a link</button>
+        <button>{sent ? "Resend link" : "Email me a link"}</button>
       </form>
     </main>
   );
