@@ -8,6 +8,8 @@
     "ENVIRONMENT": "production",
   },
   "workers_dev": true,
+  // Bundle SKILL.md as a text module so index.ts can serve it at /skill.md.
+  "rules": [{ "type": "Text", "globs": ["**/*.md"] }],
   "routes": [
     { "pattern": "loftur.app", "custom_domain": true },
     { "pattern": "*.loftur.app/*", "zone_name": "loftur.app" },

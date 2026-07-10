@@ -20,6 +20,9 @@ import {
   listSecretNames,
   deleteSecret,
   validateSecretName,
+  createAccountToken,
+  listAccountTokens,
+  revokeAccountToken,
 } from "shared/data";
 import type { AccountEnv } from "shared/account";
 import {
@@ -212,6 +215,36 @@ export const deleteSecretFn = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     await requireOwnedSite(data.siteId);
     return { ok: await deleteSecret(env, data.siteId, data.name) };
+  });
+
+// ---- account tokens (agent access PATs) -------------------------------------
+
+export const listAccountTokensFn = createServerFn().handler(async () => {
+  const account = await requireAccount();
+  const tokens = await listAccountTokens(env, account.email);
+  return {
+    tokens: tokens.map((t) => ({
+      id: t.id,
+      label: t.label,
+      created_at: t.created_at,
+      last_used_at: t.last_used_at,
+    })),
+  };
+});
+
+export const createAccountTokenFn = createServerFn({ method: "POST" })
+  .validator((input: unknown) => ({ label: str((input as { label?: unknown })?.label) || null }))
+  .handler(async ({ data }) => {
+    const account = await requireAccount();
+    const { id, token } = await createAccountToken(env, account.email, data.label);
+    return { ok: true as const, id, token };
+  });
+
+export const revokeAccountTokenFn = createServerFn({ method: "POST" })
+  .validator((input: unknown) => ({ id: str((input as { id?: unknown })?.id) }))
+  .handler(async ({ data }) => {
+    const account = await requireAccount();
+    return { ok: await revokeAccountToken(env, account.email, data.id) };
   });
 
 export { normalizeEmail };

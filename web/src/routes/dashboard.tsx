@@ -11,6 +11,9 @@ import {
   setSecretFn,
   deleteSecretFn,
   claimSiteFn,
+  listAccountTokensFn,
+  createAccountTokenFn,
+  revokeAccountTokenFn,
 } from "../server/rpc";
 import { Button } from "../components/ui/button";
 import { Card } from "../components/ui/card";
@@ -90,6 +93,8 @@ function Dashboard() {
         <p className="text-sm text-muted-foreground sm:hidden">{email}</p>
       </div>
 
+      <AgentAccess />
+
       <ClaimSite />
 
       {sites.length === 0 ? (
@@ -104,6 +109,134 @@ function Dashboard() {
         </div>
       )}
     </Shell>
+  );
+}
+
+function accountMcpConfig(token: string) {
+  return JSON.stringify(
+    {
+      mcpServers: {
+        loftur: {
+          type: "http",
+          url: "https://loftur.app/mcp",
+          headers: { Authorization: `Bearer ${token}` },
+        },
+      },
+    },
+    null,
+    2,
+  );
+}
+
+type PatRow = { id: string; label: string | null; created_at: string; last_used_at: string | null };
+
+function AgentAccess() {
+  const [tokens, setTokens] = useState<PatRow[] | null>(null);
+  const [label, setLabel] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [minted, setMinted] = useState<string | null>(null);
+
+  async function load() {
+    const r = await listAccountTokensFn();
+    setTokens(r.tokens as PatRow[]);
+  }
+  if (tokens === null) void load();
+
+  async function create(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    try {
+      const r = await createAccountTokenFn({ data: { label } });
+      if (r.ok) {
+        setMinted(r.token);
+        setLabel("");
+        await load();
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function revoke(id: string) {
+    if (!confirm("Revoke this agent token? Any agent using it loses access to your account."))
+      return;
+    await revokeAccountTokenFn({ data: { id } });
+    await load();
+  }
+
+  return (
+    <Card className="flex flex-col gap-3 border-sky/35 bg-sky/[0.05] p-5">
+      <div className="flex flex-col gap-1">
+        <div className="flex items-center gap-2">
+          <h2 className="text-base font-semibold">Agent access</h2>
+          <Badge variant="sky">account token</Badge>
+        </div>
+        <p className="max-w-[62ch] text-sm text-muted-foreground">
+          Give an agent (Openclaw, Claude Code…) one token for your whole account. With it, the
+          agent can <b>claim new subdomains</b> and <b>build any of your sites</b> over a single MCP
+          connection — see the{" "}
+          <a href="https://loftur.app/skill.md" target="_blank" rel="noreferrer">
+            skill
+          </a>
+          .
+        </p>
+      </div>
+
+      <form onSubmit={create} className="flex flex-wrap gap-2">
+        <Input
+          value={label}
+          onChange={(e) => setLabel(e.currentTarget.value)}
+          placeholder="Label (e.g. openclaw-laptop)"
+          className="min-w-0 flex-1"
+        />
+        <Button variant="sky" type="submit" disabled={busy}>
+          {busy ? "Creating…" : "Create agent token"}
+        </Button>
+      </form>
+
+      {minted && (
+        <div className="flex flex-col gap-2">
+          <Callout variant="ok">
+            New agent token — shown once. Paste it into your agent now.
+          </Callout>
+          <CodeBlock selectAll>{minted}</CodeBlock>
+          <details>
+            <summary className="cursor-pointer text-sm text-muted-foreground">
+              MCP config (loftur.app/mcp)
+            </summary>
+            <CodeBlock selectAll className="mt-2">
+              {accountMcpConfig(minted)}
+            </CodeBlock>
+          </details>
+          <CodeBlock selectAll className="text-xs">
+            {`claude mcp add loftur --transport http https://loftur.app/mcp \\\n  --header "Authorization: Bearer ${minted}"`}
+          </CodeBlock>
+        </div>
+      )}
+
+      {tokens && tokens.length > 0 && (
+        <div className="flex flex-col divide-y divide-border rounded-lg border border-border">
+          {tokens.map((t) => (
+            <div key={t.id} className="flex items-center justify-between gap-2 px-3 py-2 text-sm">
+              <span className="flex items-center gap-2">
+                {t.label || <span className="text-muted-foreground">(no label)</span>}
+                <span className="text-muted-foreground">
+                  · created {t.created_at}
+                  {t.last_used_at ? ` · last used ${t.last_used_at}` : " · never used"}
+                </span>
+              </span>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-destructive hover:bg-destructive/10"
+                onClick={() => revoke(t.id)}
+              >
+                Revoke
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
+    </Card>
   );
 }
 

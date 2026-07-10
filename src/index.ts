@@ -8,8 +8,10 @@ import { handleControlPlane } from "./control";
 import { getSiteBySubdomain } from "./tenants";
 import { buildMagicLink, normalizeEmail } from "./auth";
 import { buildAccountMagicLink } from "shared/account";
+import { createAccountToken } from "shared/data";
 import { DEFAULT_SITE_ID } from "./site/store";
 import { cmsExecuteFor } from "./cms-dispatch";
+import SKILL_MD from "../SKILL.md";
 
 /** The Loftur apex zone. Subdomains of it are tenant sites. */
 const APEX = "loftur.app";
@@ -271,6 +273,39 @@ export default {
       const origin = body.origin || "https://loftur-web.solberg.workers.dev";
       const link = await buildAccountMagicLink(env, origin, email, body.redirectTo ?? "/dashboard");
       return Response.json({ email, link });
+    }
+
+    // Admin: mint an account PAT for an email (WRITE_KEY-gated). Backs the account
+    // MCP smoke test — the dashboard "Agent access" panel is the real path.
+    if (pathname === "/__accounttoken") {
+      const token = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
+      if (!env.WRITE_KEY || token !== env.WRITE_KEY) {
+        return new Response("Unauthorized", { status: 401 });
+      }
+      let body: { email?: string; label?: string };
+      try {
+        body = (await request.json()) as typeof body;
+      } catch {
+        return Response.json({ error: "Invalid JSON body" }, { status: 400 });
+      }
+      const email = normalizeEmail(body.email);
+      if (!email) return Response.json({ error: "Invalid email" }, { status: 400 });
+      const { id, token: pat } = await createAccountToken(env, email, body.label ?? "smoke");
+      return Response.json({ email, id, token: pat });
+    }
+
+    // Public agent skill — the drop-in SKILL.md that teaches ANY agent (Claude
+    // Code, Openclaw, …) how to connect with a token and build on Loftur. Served
+    // on every host with no auth so `curl loftur.app/skill.md` and
+    // `{sub}.loftur.app/skill.md` both work; it's the bootstrap layer that hands
+    // off to the `site_help` MCP tool for the full authoring reference.
+    if (pathname === "/skill.md") {
+      return new Response(SKILL_MD, {
+        headers: {
+          "content-type": "text/markdown; charset=utf-8",
+          "cache-control": "public, max-age=300",
+        },
+      });
     }
 
     // (1) Apex (loftur.app / www) -> the Loftur control plane (signup, keys).

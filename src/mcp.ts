@@ -14,6 +14,8 @@ import { callCmsTool, listCmsTools } from "./cms-bridge";
 import { GUARDED_TOOLS, guardSchemaOp } from "./guard";
 import { SITE_TOOLS, type SiteTool } from "./site/tools";
 import { getSiteByApiKey, getSiteToken } from "./tenants";
+import { getAccountByToken } from "shared/data";
+import { ACCOUNT_TOOLS, resolveOwnedSite } from "./account-tools";
 import { DEFAULT_SITE_ID } from "./site/store";
 
 /**
@@ -103,6 +105,66 @@ function siteToolResultToMcp(result: {
   return { content: result.content, isError: result.isError ?? false };
 }
 
+function invalidArgs(name: string, error: z.ZodError) {
+  return {
+    content: [
+      {
+        type: "text",
+        text: `Invalid arguments for ${name}: ${error.issues
+          .map((i) => `${i.path.join(".")}: ${i.message}`)
+          .join("; ")}`,
+      },
+    ],
+    isError: true,
+  };
+}
+
+/**
+ * Dispatch a build/content tool call to a resolved site (owner-level): a Loki
+ * site_* tool, or (after the migration guard) an agent-cms tool. Shared by the
+ * per-site server and the account server (which resolves `siteId` from the tool's
+ * `site` argument first).
+ */
+async function dispatchSiteCall(
+  env: Env,
+  ctx: ExecutionContext,
+  siteId: string,
+  name: string,
+  args: Record<string, unknown>,
+) {
+  const siteTool: SiteTool | undefined = SITE_TOOLS.find((t) => t.name === name);
+  if (siteTool) {
+    const parsed = z.object(siteTool.inputSchema).safeParse(args);
+    if (!parsed.success) return invalidArgs(name, parsed.error);
+    const result = await siteTool.handler(parsed.data, { env, ctx, siteId });
+    return siteToolResultToMcp(result);
+  }
+  // Destructive CMS schema ops pass the per-site migration guard first.
+  if (GUARDED_TOOLS.has(name)) {
+    const verdict = await guardSchemaOp(name, args, env, siteId);
+    if (!verdict.allowed) {
+      return {
+        content: [{ type: "text", text: `Blocked by Loki migration guard: ${verdict.reason}` }],
+        isError: true,
+      };
+    }
+  }
+  return (await callCmsTool(env, siteId, name, args)) as any;
+}
+
+/** Add a required `site` selector to an advertised tool input schema (account mode). */
+function withSiteParam(schema: Record<string, unknown>): Record<string, unknown> {
+  const properties = {
+    site: {
+      type: "string",
+      description: "Target site: its subdomain or id (from list_sites / claim_site).",
+    },
+    ...(schema.properties as Record<string, unknown>),
+  };
+  const required = Array.from(new Set(["site", ...((schema.required as string[]) ?? [])]));
+  return { ...schema, properties, required };
+}
+
 /**
  * Build the MCP server for a resolved site. EVERY site gets the full toolset;
  * content tools are routed to that site's CMS (default → shared agent-cms;
@@ -163,46 +225,70 @@ function buildServer(
       };
     }
 
-    const siteTool: SiteTool | undefined = SITE_TOOLS.find((t) => t.name === name);
-    if (siteTool) {
-      const parsed = z.object(siteTool.inputSchema).safeParse(args);
-      if (!parsed.success) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Invalid arguments for ${name}: ${parsed.error.issues
-                .map((i) => `${i.path.join(".")}: ${i.message}`)
-                .join("; ")}`,
-            },
-          ],
-          isError: true,
-        };
-      }
-      const result = await siteTool.handler(parsed.data, { env, ctx, siteId });
-      return siteToolResultToMcp(result);
+    return dispatchSiteCall(env, ctx, siteId, name, args);
+  });
+
+  return server;
+}
+
+/**
+ * Build the ACCOUNT MCP server for a PAT (lftr_pat_…). It exposes account-level
+ * tools (claim_site / list_sites / whoami / rotate_site_key / mint_editor_token)
+ * PLUS every per-site build + content tool re-advertised with a required `site`
+ * selector. One connection claims subdomains AND builds any of the account's
+ * sites — the site is resolved (and ownership-checked) from the `site` argument
+ * per call. This is the "developer's hands" surface an agent like Openclaw holds.
+ */
+function buildAccountServer(env: Env, ctx: ExecutionContext, email: string): Server {
+  const server = new Server({ name: "loftur", version: "0.1.0" }, { capabilities: { tools: {} } });
+
+  server.setRequestHandler(ListToolsRequestSchema, async () => {
+    const accountDefs = ACCOUNT_TOOLS.map((t) => ({
+      name: t.name,
+      description: t.description,
+      inputSchema: shapeToJsonSchema(t.inputSchema) as any,
+    }));
+    const siteDefs = SITE_TOOLS.map((t) => ({
+      name: t.name,
+      description: t.description,
+      inputSchema: withSiteParam(shapeToJsonSchema(t.inputSchema)) as any,
+    }));
+    let cmsTools: any[] = [];
+    try {
+      const all = await listCmsTools(env, DEFAULT_SITE_ID);
+      cmsTools = all.map((t) => ({
+        ...t,
+        inputSchema: withSiteParam((t.inputSchema ?? {}) as Record<string, unknown>),
+      }));
+    } catch {
+      cmsTools = [];
+    }
+    return { tools: [...accountDefs, ...siteDefs, ...cmsTools] };
+  });
+
+  server.setRequestHandler(CallToolRequestSchema, async (req) => {
+    const name = req.params.name;
+    const args = (req.params.arguments ?? {}) as Record<string, unknown>;
+
+    const accountTool = ACCOUNT_TOOLS.find((t) => t.name === name);
+    if (accountTool) {
+      const parsed = z.object(accountTool.inputSchema).safeParse(args);
+      if (!parsed.success) return invalidArgs(name, parsed.error);
+      return accountTool.handler(parsed.data as Record<string, unknown>, { env, email });
     }
 
-    // Destructive CMS schema ops pass the migration guard first (per-site: the
-    // guard checks THIS site's published footprint).
-    if (GUARDED_TOOLS.has(name)) {
-      const verdict = await guardSchemaOp(name, args, env, siteId);
-      if (!verdict.allowed) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Blocked by Loki migration guard: ${verdict.reason}`,
-            },
-          ],
-          isError: true,
-        };
-      }
+    // A build/content tool: resolve + ownership-check the target site, then strip
+    // the `site` selector and dispatch to that site (owner-level).
+    const found = await resolveOwnedSite(
+      env,
+      email,
+      typeof args.site === "string" ? args.site : "",
+    );
+    if ("error" in found) {
+      return { content: [{ type: "text", text: found.error }], isError: true };
     }
-
-    // Forward everything else to this site's agent-cms.
-    const cmsResult = await callCmsTool(env, siteId, name, args);
-    return cmsResult as any;
+    const { site: _site, ...rest } = args;
+    return dispatchSiteCall(env, ctx, found.site.id, name, rest);
   });
 
   return server;
@@ -216,27 +302,35 @@ export async function handleMcp(
   const token = bearerToken(request);
   if (!token) return unauthorized();
 
-  // Resolve which site + ROLE this token drives:
+  // Resolve what this token drives:
   //  - legacy admin WRITE_KEY -> the default site, owner;
   //  - a site OWNER key -> that site, full toolset (schema + content + code);
-  //  - a scoped editor token -> that site, editor toolset (content + images only).
-  let siteId: string;
-  let role: "owner" | "editor" = "owner";
+  //  - a scoped editor token -> that site, editor toolset (content + images only);
+  //  - an account PAT (lftr_pat_…) -> the ACCOUNT server (claim subdomains + build
+  //    any of the account's sites via a `site` selector).
+  let server: Server;
   if (env.WRITE_KEY && token === env.WRITE_KEY) {
-    siteId = DEFAULT_SITE_ID;
+    server = buildServer(env, ctx, DEFAULT_SITE_ID, "owner");
   } else {
     const site = await getSiteByApiKey(env, token);
     if (site) {
-      siteId = site.id;
+      server = buildServer(env, ctx, site.id, "owner");
     } else {
       const scoped = await getSiteToken(env, token);
-      if (!scoped) return unauthorized();
-      siteId = scoped.site_id;
-      role = scoped.role === "owner" ? "owner" : "editor";
+      if (scoped) {
+        server = buildServer(
+          env,
+          ctx,
+          scoped.site_id,
+          scoped.role === "owner" ? "owner" : "editor",
+        );
+      } else {
+        const account = await getAccountByToken(env, token);
+        if (!account) return unauthorized();
+        server = buildAccountServer(env, ctx, account.email);
+      }
     }
   }
-
-  const server = buildServer(env, ctx, siteId, role);
   const handler = createMcpHandler(server, {
     route: "/mcp",
     sessionIdGenerator: undefined, // stateless

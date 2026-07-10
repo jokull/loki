@@ -358,3 +358,78 @@ export async function deleteSecret(env: DataEnv, siteId: string, name: string): 
     .run();
   return (res.meta?.changes ?? 0) > 0;
 }
+
+// ---- account tokens (PATs) --------------------------------------------------
+// A PAT authenticates as a whole account (an email), not a single site. It backs
+// the unified account MCP: an agent holding one PAT can claim subdomains and
+// build any of the account's sites. See migrations/0010_account_tokens.sql.
+
+export interface AccountTokenRow {
+  id: string;
+  email: string;
+  label: string | null;
+  created_at: string;
+  last_used_at: string | null;
+}
+
+/** A fresh account PAT. Prefix `lftr_pat_` to distinguish from site keys. */
+export function generateAccountToken(): string {
+  return `lftr_pat_${randomHex(24)}`;
+}
+
+/** Mint an account PAT for an email. Returns the plaintext token ONCE. */
+export async function createAccountToken(
+  env: DataEnv,
+  email: string,
+  label: string | null,
+): Promise<{ id: string; token: string }> {
+  const id = generateSiteId();
+  const token = generateAccountToken();
+  const hash = await hashApiKey(token);
+  await env.DB.prepare(
+    "INSERT INTO account_tokens (id, email, token_hash, label) VALUES (?, ?, ?, ?)",
+  )
+    .bind(id, email.trim().toLowerCase(), hash, label)
+    .run();
+  return { id, token };
+}
+
+/** Resolve a PAT to its account email (null if unknown). Stamps last_used_at. */
+export async function getAccountByToken(
+  env: DataEnv,
+  token: string,
+): Promise<{ email: string } | null> {
+  const hash = await hashApiKey(token);
+  const row = await env.DB.prepare("SELECT id, email FROM account_tokens WHERE token_hash = ?")
+    .bind(hash)
+    .first<{ id: string; email: string }>();
+  if (!row) return null;
+  // Best-effort recency stamp; never block auth on it.
+  await env.DB.prepare("UPDATE account_tokens SET last_used_at = CURRENT_TIMESTAMP WHERE id = ?")
+    .bind(row.id)
+    .run()
+    .catch(() => {});
+  return { email: row.email };
+}
+
+/** List an account's PATs (never the token itself). */
+export async function listAccountTokens(env: DataEnv, email: string): Promise<AccountTokenRow[]> {
+  const { results } = await env.DB.prepare(
+    "SELECT id, email, label, created_at, last_used_at FROM account_tokens WHERE lower(email) = ? ORDER BY created_at DESC",
+  )
+    .bind(email.trim().toLowerCase())
+    .all<AccountTokenRow>();
+  return results ?? [];
+}
+
+/** Revoke a PAT by id, scoped to the owning account. */
+export async function revokeAccountToken(
+  env: DataEnv,
+  email: string,
+  id: string,
+): Promise<boolean> {
+  const res = await env.DB.prepare("DELETE FROM account_tokens WHERE id = ? AND lower(email) = ?")
+    .bind(id, email.trim().toLowerCase())
+    .run();
+  return (res.meta?.changes ?? 0) > 0;
+}
