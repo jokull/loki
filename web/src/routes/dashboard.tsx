@@ -1,5 +1,6 @@
 import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
 import { useState } from "react";
+import { ChevronRight, ExternalLink } from "lucide-react";
 import {
   mySitesFn,
   rotateKeyFn,
@@ -11,6 +12,16 @@ import {
   deleteSecretFn,
   claimSiteFn,
 } from "../server/rpc";
+import { Button } from "../components/ui/button";
+import { Card } from "../components/ui/card";
+import { Input, Label } from "../components/ui/input";
+import { Badge } from "../components/ui/badge";
+import { Callout } from "../components/ui/callout";
+import { CodeBlock } from "../components/ui/code-block";
+import { Separator } from "../components/ui/separator";
+import { Collapsible, CollapsibleTrigger, CollapsiblePanel } from "../components/ui/collapsible";
+import { Eyebrow, Shell } from "../components/layout";
+import { Brand } from "../components/brand";
 
 export const Route = createFileRoute("/dashboard")({
   // mySitesFn throws a redirect to /login when not signed in.
@@ -38,15 +49,19 @@ function mcpConfig(subdomain: string, key: string) {
 
 function KeyReveal({ subdomain, apiKey }: { subdomain: string; apiKey: string }) {
   return (
-    <div className="stack" style={{ gap: ".4rem" }}>
-      <div className="notice ok small">
+    <div className="flex flex-col gap-2">
+      <Callout variant="ok" className="text-sm">
         New owner key — shown once. Store it now; you can always rotate again.
-      </div>
-      <pre className="key">{apiKey}</pre>
-      <details>
-        <summary className="small muted" style={{ cursor: "pointer" }}>MCP config</summary>
-        <pre className="key">{mcpConfig(subdomain, apiKey)}</pre>
-      </details>
+      </Callout>
+      <CodeBlock selectAll>{apiKey}</CodeBlock>
+      <Collapsible>
+        <CollapsibleTrigger>
+          <ChevronRight /> MCP config
+        </CollapsibleTrigger>
+        <CollapsiblePanel>
+          <CodeBlock selectAll className="mt-2">{mcpConfig(subdomain, apiKey)}</CodeBlock>
+        </CollapsiblePanel>
+      </Collapsible>
     </div>
   );
 }
@@ -54,34 +69,37 @@ function KeyReveal({ subdomain, apiKey }: { subdomain: string; apiKey: string })
 function Dashboard() {
   const { email, sites } = Route.useLoaderData();
   return (
-    <div className="wrap stack">
-      <header className="between">
-        <Link to="/" className="brand"><span className="dot" />loftur</Link>
-        <div className="row small">
-          <span className="muted">{email}</span>
-          <Link to="/auth/logout" className="btn ghost small">Log out</Link>
+    <Shell className="flex flex-col gap-8">
+      <header className="flex items-center justify-between gap-4">
+        <Link to="/" className="text-lg text-foreground no-underline">
+          <Brand />
+        </Link>
+        <div className="flex items-center gap-3">
+          <span className="hidden text-sm text-muted-foreground sm:inline">{email}</span>
+          <Button variant="ghost" size="sm" render={<Link to="/auth/logout" />}>Log out</Button>
         </div>
       </header>
 
-      <div className="between">
-        <div>
-          <p className="eyebrow">Dashboard</p>
-          <h1 style={{ fontSize: "1.6rem", margin: ".2rem 0 0" }}>Your sites</h1>
-        </div>
+      <div className="flex flex-col gap-1">
+        <Eyebrow>Dashboard</Eyebrow>
+        <h1 className="text-2xl font-semibold">Your sites</h1>
+        <p className="text-sm text-muted-foreground sm:hidden">{email}</p>
       </div>
 
       <ClaimSite />
 
       {sites.length === 0 ? (
-        <div className="card muted">No sites yet. Claim your first subdomain above.</div>
+        <Card className="p-5 text-sm text-muted-foreground">
+          No sites yet. Claim your first subdomain above.
+        </Card>
       ) : (
-        <div className="stack">
+        <div className="flex flex-col gap-4">
           {sites.map((s: SiteRow) => (
             <SiteCard key={s.id} site={s} />
           ))}
         </div>
       )}
-    </div>
+    </Shell>
   );
 }
 
@@ -110,31 +128,30 @@ function ClaimSite() {
   }
 
   return (
-    <div className="card stack">
-      <form onSubmit={claim} className="stack">
-        <label htmlFor="sub">Claim a new site</label>
-        <div className="row">
-          <div className="row" style={{ flex: 1, gap: 0 }}>
-            <input
+    <Card className="flex flex-col gap-3 p-5">
+      <form onSubmit={claim} className="flex flex-col gap-2">
+        <Label htmlFor="sub">Claim a new site</Label>
+        <div className="flex flex-wrap gap-2">
+          <div className="flex min-w-0 flex-1 items-stretch">
+            <Input
               id="sub"
-              className="inp"
               value={subdomain}
               onChange={(e) => setSubdomain(e.currentTarget.value.toLowerCase())}
               placeholder="acme"
-              style={{ borderTopRightRadius: 0, borderBottomRightRadius: 0 }}
+              className="rounded-r-none border-r-0"
             />
-            <span className="pill" style={{ borderRadius: 0, borderLeft: 0, padding: ".55rem .6rem" }}>
+            <span className="inline-flex items-center rounded-r-md border border-l-0 border-input bg-muted px-3 font-mono text-sm text-muted-foreground">
               .loftur.app
             </span>
           </div>
-          <button className="btn primary" disabled={busy || !subdomain}>
+          <Button variant="sky" type="submit" disabled={busy || !subdomain}>
             {busy ? "Claiming…" : "Claim"}
-          </button>
+          </Button>
         </div>
-        {err && <div className="notice err small">{err}</div>}
+        {err && <Callout variant="error">{err}</Callout>}
       </form>
       {claimed && <KeyReveal subdomain={claimed.subdomain} apiKey={claimed.apiKey} />}
-    </div>
+    </Card>
   );
 }
 
@@ -143,25 +160,40 @@ type Panel = null | "key" | "tokens" | "secrets";
 function SiteCard({ site }: { site: SiteRow }) {
   const [panel, setPanel] = useState<Panel>(null);
   const toggle = (p: Panel) => setPanel((cur) => (cur === p ? null : p));
+  const tab = (p: Exclude<Panel, null>, label: string) => (
+    <Button
+      variant={panel === p ? "secondary" : "outline"}
+      size="sm"
+      onClick={() => toggle(p)}
+    >
+      {label}
+    </Button>
+  );
   return (
-    <div className="card stack">
-      <div className="between">
-        <div>
-          <a href={`https://${site.subdomain}.loftur.app`} target="_blank" rel="noreferrer" style={{ fontWeight: 600 }}>
+    <Card className="flex flex-col gap-4 p-5">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex flex-col gap-0.5">
+          <a
+            href={`https://${site.subdomain}.loftur.app`}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1.5 font-medium text-foreground no-underline hover:text-link"
+          >
             {site.subdomain}.loftur.app
+            <ExternalLink className="size-3.5 text-muted-foreground" />
           </a>
-          <div className="small muted">created {site.created_at}</div>
+          <span className="text-xs text-muted-foreground">created {site.created_at}</span>
         </div>
-        <div className="row small">
-          <button className="btn" onClick={() => toggle("key")}>Owner key</button>
-          <button className="btn" onClick={() => toggle("tokens")}>Editor tokens</button>
-          <button className="btn" onClick={() => toggle("secrets")}>Secrets</button>
+        <div className="flex flex-wrap gap-2">
+          {tab("key", "Owner key")}
+          {tab("tokens", "Editor tokens")}
+          {tab("secrets", "Secrets")}
         </div>
       </div>
       {panel === "key" && <RotateKey site={site} />}
       {panel === "tokens" && <Tokens site={site} />}
       {panel === "secrets" && <Secrets site={site} />}
-    </div>
+    </Card>
   );
 }
 
@@ -179,13 +211,17 @@ function RotateKey({ site }: { site: SiteRow }) {
     }
   }
   return (
-    <div className="stack">
-      <hr className="divider" />
-      <p className="small muted" style={{ margin: 0 }}>
-        Lost your owner key, or want to revoke it? Rotate to mint a new one. The old
-        key is invalidated instantly. This is your account-recovery path.
+    <div className="flex flex-col gap-3">
+      <Separator />
+      <p className="text-sm text-muted-foreground">
+        Lost your owner key, or want to revoke it? Rotate to mint a new one. The old key is
+        invalidated instantly. This is your account-recovery path.
       </p>
-      <div><button className="btn danger" onClick={rotate} disabled={busy}>{busy ? "Rotating…" : "Rotate owner key"}</button></div>
+      <div>
+        <Button variant="destructive" onClick={rotate} disabled={busy}>
+          {busy ? "Rotating…" : "Rotate owner key"}
+        </Button>
+      </div>
       {key && <KeyReveal subdomain={site.subdomain} apiKey={key} />}
     </div>
   );
@@ -222,28 +258,37 @@ function Tokens({ site }: { site: SiteRow }) {
   }
 
   return (
-    <div className="stack">
-      <hr className="divider" />
-      <p className="small muted" style={{ margin: 0 }}>
-        Editor tokens let a content editor connect their own MCP client to maintain
-        content and upload images — no schema or code access.
+    <div className="flex flex-col gap-3">
+      <Separator />
+      <p className="text-sm text-muted-foreground">
+        Editor tokens let a content editor connect their own MCP client to maintain content and
+        upload images — no schema or code access.
       </p>
-      <form onSubmit={mint} className="row">
-        <input className="inp" value={label} onChange={(e) => setLabel(e.currentTarget.value)} placeholder="Label (e.g. Jane, content)" style={{ flex: 1 }} />
-        <button className="btn primary" disabled={busy}>Mint editor token</button>
+      <form onSubmit={mint} className="flex flex-wrap gap-2">
+        <Input
+          value={label}
+          onChange={(e) => setLabel(e.currentTarget.value)}
+          placeholder="Label (e.g. Jane, content)"
+          className="min-w-0 flex-1"
+        />
+        <Button variant="sky" type="submit" disabled={busy}>Mint editor token</Button>
       </form>
       {minted && (
-        <div className="stack" style={{ gap: ".3rem" }}>
-          <div className="notice ok small">Editor token — shown once.</div>
-          <pre className="key">{minted}</pre>
+        <div className="flex flex-col gap-1.5">
+          <Callout variant="ok">Editor token — shown once.</Callout>
+          <CodeBlock selectAll>{minted}</CodeBlock>
         </div>
       )}
       {tokens && tokens.length > 0 && (
-        <div className="stack" style={{ gap: ".3rem" }}>
+        <div className="flex flex-col divide-y divide-border rounded-lg border border-border">
           {tokens.map((t) => (
-            <div key={t.id} className="between small">
-              <span><span className="pill">{t.role}</span> {t.label || <span className="muted">(no label)</span>} <span className="muted">· {t.created_at}</span></span>
-              <button className="btn ghost danger small" onClick={() => revoke(t.id)}>Revoke</button>
+            <div key={t.id} className="flex items-center justify-between gap-2 px-3 py-2 text-sm">
+              <span className="flex items-center gap-2">
+                <Badge variant="mono">{t.role}</Badge>
+                {t.label || <span className="text-muted-foreground">(no label)</span>}
+                <span className="text-muted-foreground">· {t.created_at}</span>
+              </span>
+              <Button variant="ghost" size="sm" className="text-destructive hover:bg-destructive/10" onClick={() => revoke(t.id)}>Revoke</Button>
             </div>
           ))}
         </div>
@@ -284,24 +329,36 @@ function Secrets({ site }: { site: SiteRow }) {
   }
 
   return (
-    <div className="stack">
-      <hr className="divider" />
-      <p className="small muted" style={{ margin: 0 }}>
+    <div className="flex flex-col gap-3">
+      <Separator />
+      <p className="text-sm text-muted-foreground">
         Encrypted secrets your site's server code reads with <code>env.SECRETS.get("NAME")</code>.
         Values are write-only here — only names are shown.
       </p>
-      <form onSubmit={save} className="row">
-        <input className="inp" value={name} onChange={(e) => setName(e.currentTarget.value)} placeholder="STRIPE_SECRET_KEY" style={{ flex: "0 1 14rem" }} />
-        <input className="inp" value={value} onChange={(e) => setValue(e.currentTarget.value)} placeholder="value" style={{ flex: 1 }} />
-        <button className="btn primary" disabled={busy || !name || !value}>Set</button>
+      <form onSubmit={save} className="flex flex-wrap gap-2">
+        <Input
+          value={name}
+          onChange={(e) => setName(e.currentTarget.value)}
+          placeholder="STRIPE_SECRET_KEY"
+          className="w-full font-mono sm:w-56"
+        />
+        <Input
+          value={value}
+          onChange={(e) => setValue(e.currentTarget.value)}
+          placeholder="value"
+          className="min-w-0 flex-1"
+        />
+        <Button variant="sky" type="submit" disabled={busy || !name || !value}>Set</Button>
       </form>
-      {err && <div className="notice err small">{err}</div>}
+      {err && <Callout variant="error">{err}</Callout>}
       {secrets && secrets.length > 0 && (
-        <div className="stack" style={{ gap: ".3rem" }}>
+        <div className="flex flex-col divide-y divide-border rounded-lg border border-border">
           {secrets.map((s) => (
-            <div key={s.name} className="between small">
-              <span className="mono">{s.name} <span className="muted">· updated {s.updated_at}</span></span>
-              <button className="btn ghost danger small" onClick={() => del(s.name)}>Delete</button>
+            <div key={s.name} className="flex items-center justify-between gap-2 px-3 py-2 text-sm">
+              <span className="font-mono">
+                {s.name} <span className="text-muted-foreground">· updated {s.updated_at}</span>
+              </span>
+              <Button variant="ghost" size="sm" className="text-destructive hover:bg-destructive/10" onClick={() => del(s.name)}>Delete</Button>
             </div>
           ))}
         </div>

@@ -1,95 +1,196 @@
+@import "tailwindcss";
+@import "@fontsource-variable/geist";
+@import "@fontsource-variable/geist-mono";
+
+/*
+ * Loftur design system — "Loft".
+ * Minimal monochrome UI (cool near-black ink / near-white paper) punctuated by a
+ * single baby-blue "Sky" accent. Primary/CTA buttons stay ink; Sky owns links,
+ * focus rings, the brand mark, the marketing CTA, and selection.
+ *
+ * shadcn-style semantic tokens only. The stock Tailwind color palette is cleared
+ * below so `bg-blue-500` & friends don't exist — everything routes through tokens.
+ */
+
+/* Dark theme follows the OS preference; a `.dark` class can force it later. */
+@custom-variant dark (&:where(.dark, .dark *));
+
 :root {
-  --bg: #ffffff;
-  --panel: #f7f6f4;
-  --panel-2: #efece8;
-  --text: #12161d;
-  --muted: #5b6472;
-  --border: #e4e0da;
-  --accent: #cf551d;
-  --accent-ink: #ffffff;
-  --danger: #b3261e;
-  --radius: 10px;
-  --font: ui-sans-serif, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
-  --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  --radius: 0.625rem;
+
+  --background: oklch(0.99 0.003 240);
+  --foreground: oklch(0.17 0.015 262);
+
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.17 0.015 262);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.17 0.015 262);
+
+  /* Primary = ink (the "minimal black" UI). */
+  --primary: oklch(0.21 0.02 262);
+  --primary-foreground: oklch(0.985 0.003 240);
+
+  --secondary: oklch(0.966 0.004 250);
+  --secondary-foreground: oklch(0.21 0.02 262);
+  --muted: oklch(0.966 0.004 250);
+  --muted-foreground: oklch(0.52 0.016 258);
+
+  /* shadcn `accent` = subtle hover surface (faint sky tint), NOT the brand pop. */
+  --accent: oklch(0.955 0.017 238);
+  --accent-foreground: oklch(0.21 0.02 262);
+
+  --destructive: oklch(0.577 0.208 24);
+  --destructive-foreground: oklch(0.985 0.003 240);
+
+  --border: oklch(0.918 0.006 255);
+  --input: oklch(0.918 0.006 255);
+
+  /* Sky — the one baby-blue accent. `sky` is the fill (ink text on it);
+     `link` is the legible-on-paper stop for text & the focus ring. */
+  --sky: oklch(0.83 0.09 233);
+  --sky-foreground: oklch(0.19 0.02 262);
+  --link: oklch(0.55 0.16 250);
+  --ring: oklch(0.55 0.16 250);
 }
+
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #0d1016;
-    --panel: #151a22;
-    --panel-2: #1b212b;
-    --text: #e9edf3;
-    --muted: #8b95a3;
-    --border: #262d38;
-    --accent: #f0752e;
-    --accent-ink: #12161d;
-    --danger: #ff6b5e;
+    --background: oklch(0.155 0.012 262);
+    --foreground: oklch(0.96 0.004 240);
+
+    --card: oklch(0.192 0.013 262);
+    --card-foreground: oklch(0.96 0.004 240);
+    --popover: oklch(0.192 0.013 262);
+    --popover-foreground: oklch(0.96 0.004 240);
+
+    --primary: oklch(0.97 0.004 240);
+    --primary-foreground: oklch(0.19 0.02 262);
+
+    --secondary: oklch(0.245 0.013 260);
+    --secondary-foreground: oklch(0.96 0.004 240);
+    --muted: oklch(0.245 0.013 260);
+    --muted-foreground: oklch(0.70 0.016 250);
+
+    --accent: oklch(0.28 0.025 245);
+    --accent-foreground: oklch(0.96 0.004 240);
+
+    --destructive: oklch(0.62 0.19 22);
+    --destructive-foreground: oklch(0.985 0 0);
+
+    --border: oklch(1 0 0 / 9%);
+    --input: oklch(1 0 0 / 12%);
+
+    --sky: oklch(0.80 0.11 233);
+    --sky-foreground: oklch(0.17 0.02 262);
+    --link: oklch(0.80 0.11 233);
+    --ring: oklch(0.80 0.11 233);
   }
 }
-* { box-sizing: border-box; }
-html, body { margin: 0; padding: 0; }
-body {
-  background: var(--bg);
-  color: var(--text);
-  font-family: var(--font);
-  line-height: 1.55;
-  -webkit-font-smoothing: antialiased;
+
+/* Explicit-toggle parity (mirrors the media query for a future theme switch). */
+.dark {
+  --background: oklch(0.155 0.012 262);
+  --foreground: oklch(0.96 0.004 240);
+  --card: oklch(0.192 0.013 262);
+  --card-foreground: oklch(0.96 0.004 240);
+  --popover: oklch(0.192 0.013 262);
+  --popover-foreground: oklch(0.96 0.004 240);
+  --primary: oklch(0.97 0.004 240);
+  --primary-foreground: oklch(0.19 0.02 262);
+  --secondary: oklch(0.245 0.013 260);
+  --secondary-foreground: oklch(0.96 0.004 240);
+  --muted: oklch(0.245 0.013 260);
+  --muted-foreground: oklch(0.70 0.016 250);
+  --accent: oklch(0.28 0.025 245);
+  --accent-foreground: oklch(0.96 0.004 240);
+  --destructive: oklch(0.62 0.19 22);
+  --destructive-foreground: oklch(0.985 0 0);
+  --border: oklch(1 0 0 / 9%);
+  --input: oklch(1 0 0 / 12%);
+  --sky: oklch(0.80 0.11 233);
+  --sky-foreground: oklch(0.17 0.02 262);
+  --link: oklch(0.80 0.11 233);
+  --ring: oklch(0.80 0.11 233);
 }
-a { color: var(--accent); text-decoration: none; }
-a:hover { text-decoration: underline; }
-h1, h2, h3 { line-height: 1.15; letter-spacing: -0.02em; text-wrap: balance; }
-code, pre, .mono { font-family: var(--mono); }
 
-.wrap { max-width: 60rem; margin: 0 auto; padding: 2rem 1.25rem 4rem; }
-.narrow { max-width: 26rem; }
+@theme inline {
+  /* Wipe Tailwind's stock palette — only semantic tokens survive. */
+  --color-*: initial;
+  --color-transparent: transparent;
+  --color-current: currentColor;
+  --color-white: #fff;
+  --color-black: #000;
 
-.brand {
-  display: inline-flex; align-items: center; gap: .5rem;
-  font-weight: 700; letter-spacing: -0.03em; font-size: 1.15rem; color: var(--text);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-sky: var(--sky);
+  --color-sky-foreground: var(--sky-foreground);
+  --color-link: var(--link);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  --font-sans: "Geist Variable", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: "Geist Mono Variable", ui-monospace, "SF Mono", Menlo, monospace;
 }
-.brand .dot { width: 14px; height: 14px; border-radius: 4px; background: var(--accent);
-  box-shadow: 0 0 14px color-mix(in srgb, var(--accent) 60%, transparent); }
 
-.eyebrow { font-family: var(--mono); text-transform: uppercase; letter-spacing: .14em;
-  font-size: .72rem; color: var(--muted); }
-
-.card {
-  background: var(--panel); border: 1px solid var(--border);
-  border-radius: var(--radius); padding: 1.1rem 1.25rem;
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+  body {
+    background-color: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  ::selection {
+    background-color: color-mix(in oklch, var(--sky) 40%, transparent);
+    color: var(--foreground);
+  }
+  h1, h2, h3 {
+    letter-spacing: -0.02em;
+    text-wrap: balance;
+  }
+  /* Content links inside prose default to Sky; component links opt out via class. */
+  a:not([class]) {
+    color: var(--link);
+    text-decoration: none;
+  }
+  a:not([class]):hover {
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+  code:not([class]), kbd {
+    font-family: var(--font-mono);
+    font-size: 0.85em;
+    background-color: var(--muted);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 0.05em 0.34em;
+  }
 }
-.stack { display: flex; flex-direction: column; gap: 1rem; }
-.row { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; }
-.between { display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
-.muted { color: var(--muted); }
-.small { font-size: .85rem; }
-
-label { display: block; font-size: .8rem; color: var(--muted); margin-bottom: .3rem; }
-input[type=text], input[type=email], input.inp {
-  width: 100%; padding: .6rem .7rem; border-radius: 8px;
-  border: 1px solid var(--border); background: var(--bg); color: var(--text);
-  font: inherit; font-size: .95rem;
-}
-input:focus { outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent); outline-offset: 1px; }
-
-.btn {
-  display: inline-flex; align-items: center; gap: .4rem; cursor: pointer;
-  padding: .55rem .9rem; border-radius: 8px; border: 1px solid var(--border);
-  background: var(--panel-2); color: var(--text); font: inherit; font-size: .9rem; font-weight: 600;
-}
-.btn:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
-.btn.primary { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
-.btn.ghost { background: transparent; }
-.btn.danger { color: var(--danger); }
-.btn:disabled { opacity: .5; cursor: default; }
-
-pre.key {
-  background: var(--panel-2); border: 1px dashed var(--border); border-radius: 8px;
-  padding: .7rem .8rem; overflow-x: auto; font-size: .82rem; margin: .4rem 0; user-select: all;
-}
-.notice { padding: .6rem .8rem; border-radius: 8px; font-size: .9rem;
-  border: 1px solid var(--border); background: var(--panel-2); }
-.notice.ok { border-color: color-mix(in srgb, #2f9e44 45%, var(--border)); }
-.notice.err { border-color: color-mix(in srgb, var(--danger) 45%, var(--border)); color: var(--danger); }
-.pill { font-size: .72rem; font-family: var(--mono); padding: .1rem .45rem; border-radius: 999px;
-  border: 1px solid var(--border); color: var(--muted); }
-.grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr)); }
-.divider { height: 1px; background: var(--border); border: 0; margin: .4rem 0; }

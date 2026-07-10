@@ -1,4 +1,8 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { Button } from "../components/ui/button";
+import { Badge } from "../components/ui/badge";
+import { Card } from "../components/ui/card";
+import { Eyebrow, Shell, SiteHeader } from "../components/layout";
 
 export const Route = createFileRoute("/changelog")({
   component: Changelog,
@@ -44,38 +48,35 @@ const ENTRIES: Array<{ date: string; title: string; items: string[] }> = [
 
 function Changelog() {
   return (
-    <div className="wrap stack" style={{ gap: "2rem", maxWidth: "44rem" }}>
-      <header className="between">
-        <Link to="/" className="brand"><span className="dot" />loftur</Link>
-        <nav className="row small">
-          <Link to="/docs">Docs</Link>
-          <Link to="/login" className="btn primary">Sign in</Link>
-        </nav>
-      </header>
+    <Shell width="prose" className="flex flex-col gap-10">
+      <SiteHeader>
+        <Link to="/docs" className="px-2 text-sm text-muted-foreground no-underline hover:text-foreground">Docs</Link>
+        <Button variant="sky" size="sm" render={<Link to="/login" />}>Sign in</Button>
+      </SiteHeader>
 
-      <div className="stack" style={{ gap: ".3rem" }}>
-        <p className="eyebrow">Changelog</p>
-        <h1 style={{ fontSize: "2rem", margin: 0 }}>What's new</h1>
+      <div className="flex flex-col gap-2">
+        <Eyebrow>Changelog</Eyebrow>
+        <h1 className="text-3xl font-semibold sm:text-4xl">What's new</h1>
       </div>
 
-      <div className="stack" style={{ gap: "1.25rem" }}>
+      <div className="flex flex-col gap-5">
         {ENTRIES.map((e, i) => (
-          <div key={i} className="card stack" style={{ gap: ".5rem" }}>
-            <div className="row" style={{ gap: ".6rem" }}>
-              <span className="pill">{e.date}</span>
-              <h3 style={{ fontSize: "1.05rem", margin: 0 }}>{e.title}</h3>
+          <Card key={i} className="flex flex-col gap-3 p-5">
+            <div className="flex items-center gap-2.5">
+              <Badge variant="mono">{e.date}</Badge>
+              <h3 className="text-base font-medium">{e.title}</h3>
             </div>
-            <ul className="muted small" style={{ margin: 0, paddingLeft: "1.1rem", lineHeight: 1.8 }}>
+            <ul className="flex list-disc flex-col gap-1.5 pl-5 text-sm text-muted-foreground marker:text-link">
               {e.items.map((it, j) => <li key={j}>{it}</li>)}
             </ul>
-          </div>
+          </Card>
         ))}
       </div>
 
-      <footer className="between small muted">
-        <Link to="/">← Home</Link>
-        <a href="https://github.com/jokull/loftur" target="_blank" rel="noreferrer">GitHub</a>
+      <footer className="flex items-center justify-between border-t border-border pt-6 text-sm text-muted-foreground">
+        <Link to="/" className="no-underline hover:text-foreground">← Home</Link>
+        <a href="https://github.com/jokull/loftur" target="_blank" rel="noreferrer" className="no-underline hover:text-foreground">GitHub</a>
       </footer>
-    </div>
+    </Shell>
   );
 }

@@ -1,6 +1,12 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useState } from "react";
 import { loginFn } from "../server/rpc";
+import { Button } from "../components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card";
+import { Input, Label } from "../components/ui/input";
+import { Callout } from "../components/ui/callout";
+import { Eyebrow, Shell } from "../components/layout";
+import { Brand } from "../components/brand";
 
 export const Route = createFileRoute("/login")({
   component: Login,
@@ -25,55 +31,58 @@ function Login() {
   }
 
   return (
-    <div className="wrap narrow stack">
-      <Link to="/" className="brand"><span className="dot" />loftur</Link>
-      <div className="card stack">
-        <div>
-          <p className="eyebrow">Account</p>
-          <h1 style={{ fontSize: "1.5rem", margin: ".2rem 0 0" }}>Sign in</h1>
-          <p className="muted small">
-            Manage your sites, keys, editor tokens, and secrets. We'll email you a
-            one-time sign-in link — no password.
-          </p>
-        </div>
-
-        {state.status === "sent" ? (
-          <div className="stack">
-            <div className="notice ok">
-              Check your inbox — we sent a sign-in link to <b>{email}</b>. It expires in 15 minutes.
+    <Shell width="narrow" className="flex flex-col gap-6">
+      <Link to="/" className="text-lg text-foreground no-underline">
+        <Brand />
+      </Link>
+      <Card>
+        <CardHeader>
+          <Eyebrow>Account</Eyebrow>
+          <CardTitle className="text-xl">Sign in</CardTitle>
+          <CardDescription>
+            Manage your sites, keys, editor tokens, and secrets. We'll email you a one-time
+            sign-in link — no password.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {state.status === "sent" ? (
+            <div className="flex flex-col gap-3">
+              <Callout variant="ok">
+                Check your inbox — we sent a sign-in link to <b>{email}</b>. It expires in 15 minutes.
+              </Callout>
+              {state.devLink && (
+                <p className="text-sm text-muted-foreground">
+                  Dev link:{" "}
+                  <a href={state.devLink} className="break-all">{state.devLink}</a>
+                </p>
+              )}
             </div>
-            {state.devLink && (
-              <div className="small">
-                <span className="muted">Dev link: </span>
-                <a href={state.devLink}>{state.devLink}</a>
+          ) : (
+            <form onSubmit={submit} className="flex flex-col gap-4">
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="email">Email</Label>
+                <Input
+                  id="email"
+                  type="email"
+                  required
+                  autoComplete="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.currentTarget.value)}
+                  placeholder="you@company.com"
+                />
               </div>
-            )}
-          </div>
-        ) : (
-          <form onSubmit={submit} className="stack">
-            <div>
-              <label htmlFor="email">Email</label>
-              <input
-                id="email"
-                type="email"
-                required
-                autoComplete="email"
-                value={email}
-                onChange={(e) => setEmail(e.currentTarget.value)}
-                placeholder="you@company.com"
-              />
-            </div>
-            {state.status === "error" && <div className="notice err">{state.msg}</div>}
-            <button className="btn primary" disabled={state.status === "sending"}>
-              {state.status === "sending" ? "Sending…" : "Email me a sign-in link"}
-            </button>
-          </form>
-        )}
-      </div>
-      <p className="small muted">
-        New here? Signing in with a fresh email is all it takes — then claim a
-        <code> {"{name}"}.loftur.app</code> from your dashboard.
+              {state.status === "error" && <Callout variant="error">{state.msg}</Callout>}
+              <Button variant="sky" type="submit" disabled={state.status === "sending"}>
+                {state.status === "sending" ? "Sending…" : "Email me a sign-in link"}
+              </Button>
+            </form>
+          )}
+        </CardContent>
+      </Card>
+      <p className="text-sm text-muted-foreground">
+        New here? Signing in with a fresh email is all it takes — then claim a{" "}
+        <code>{"{name}"}.loftur.app</code> from your dashboard.
       </p>
-    </div>
+    </Shell>
   );
 }
