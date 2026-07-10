@@ -163,10 +163,7 @@ const HEADER = (version: number) =>
 `;
 
 /** Emit the full .d.ts-style TypeScript source for the schema. */
-export function generateSchemaTypes(
-  schema: GraphQLSchema,
-  version: number,
-): string {
+export function generateSchemaTypes(schema: GraphQLSchema, version: number): string {
   const typeMap = schema.getTypeMap();
   const objects: GraphQLObjectType[] = [];
   const inputs: GraphQLInputObjectType[] = [];

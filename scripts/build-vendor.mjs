@@ -20,12 +20,7 @@ const outDir = join(root, "src", "vendor");
 // three marked `external`, so at runtime they all resolve to the SINGLE
 // vendored `preact` module in the map (shared hook state / options — critical
 // for hooks + render-to-string to work against the same component instances).
-const SPECIFIERS = [
-  "preact",
-  "preact/hooks",
-  "preact/jsx-runtime",
-  "preact-render-to-string",
-];
+const SPECIFIERS = ["preact", "preact/hooks", "preact/jsx-runtime", "preact-render-to-string"];
 
 // Each entry becomes one vendored ESM module string. `name` is the bare
 // specifier the site code imports; `entry` is what esbuild bundles.

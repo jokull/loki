@@ -22,34 +22,18 @@ export async function cmsExecuteFor(
   if (siteId === DEFAULT_SITE_ID) {
     return await getCms(env).execute(query, variables ?? {}, { includeDrafts });
   }
-  const raw = await tenantStub(env, siteId).cmsExecute(
-    query,
-    variables ?? {},
-    includeDrafts,
-  );
+  const raw = await tenantStub(env, siteId).cmsExecute(query, variables ?? {}, includeDrafts);
   return JSON.parse(raw);
 }
 
 /** Forward an HTTP request (agent-cms MCP/REST/GraphQL) to a site's CMS. */
-export async function cmsFetchFor(
-  env: Env,
-  siteId: string,
-  request: Request,
-): Promise<Response> {
+export async function cmsFetchFor(env: Env, siteId: string, request: Request): Promise<Response> {
   if (siteId === DEFAULT_SITE_ID) {
     return await getCms(env, new URL(request.url).origin).fetch(request);
   }
   const headers: Record<string, string> = {};
   request.headers.forEach((v: string, k: string) => (headers[k] = v));
-  const body =
-    request.method === "GET" || request.method === "HEAD"
-      ? null
-      : await request.text();
-  const r = await tenantStub(env, siteId).cmsRequest(
-    request.method,
-    request.url,
-    headers,
-    body,
-  );
+  const body = request.method === "GET" || request.method === "HEAD" ? null : await request.text();
+  const r = await tenantStub(env, siteId).cmsRequest(request.method, request.url, headers, body);
   return new Response(r.body, { status: r.status, headers: r.headers });
 }

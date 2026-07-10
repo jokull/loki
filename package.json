@@ -8,6 +8,12 @@
     "dev": "wrangler dev",
     "types": "wrangler types",
     "typecheck": "tsc --noEmit",
+    "lint": "vp lint",
+    "lint:fix": "vp lint --fix",
+    "format": "vp fmt",
+    "format:check": "vp fmt --check",
+    "check": "vp check",
+    "smoke": "node scripts/smoke/run.mjs",
     "vendor": "node scripts/build-vendor.mjs"
   },
   "dependencies": {
@@ -18,6 +24,7 @@
     "just-bash": "3.1.0",
     "preact": "^10.29.5",
     "preact-render-to-string": "^6.7.0",
+    "shared": "workspace:*",
     "sucrase": "^3.35.0",
     "zod": "^3.25.0"
   },
@@ -25,6 +32,7 @@
     "@cloudflare/workers-types": "^4.20260317.1",
     "esbuild": "^0.25.0",
     "typescript": "^6.0.3",
+    "vite-plus": "^0.2.4",
     "wrangler": "^4.94.0"
   }
 }

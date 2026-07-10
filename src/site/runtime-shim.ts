@@ -301,6 +301,15 @@ export function serverFn(config) {
       return { status: 200, result: result };
     } catch (e) {
       console.error("[loki serverFn] handler threw for " + (id || "?"), e);
+      if (env && env.LOG) {
+        try {
+          await env.LOG.write(
+            "error",
+            "serverFn " + (id || "?") + ": " + ((e && e.message) || String(e)),
+            "serverFn",
+          );
+        } catch (_) { /* logging must not mask the original error */ }
+      }
       return { status: 500, error: "Server function failed." };
     }
   };

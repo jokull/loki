@@ -1,0 +1,27 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "loftur-web",
+  "compatibility_date": "2026-07-09",
+  "compatibility_flags": ["nodejs_compat"],
+  "main": "@tanstack/react-start/server-entry",
+  "workers_dev": true,
+  "observability": {
+    "enabled": true,
+  },
+  "vars": {
+    "ENVIRONMENT": "production",
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "loftur-db",
+      "database_id": "20c00d09-bc49-4fe6-b09c-45e05131f34d",
+    },
+  ],
+  "send_email": [
+    {
+      "name": "EMAIL",
+      "remote": true,
+    },
+  ],
+}

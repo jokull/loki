@@ -34,7 +34,7 @@ Every site gets the full toolset over one merged `/mcp` endpoint (Loftur's own s
 
 **Byte-faithful versioning + an in-Worker shell.** `preview_site` mints a 30-minute token that serves the draft at the real domain behind an HttpOnly cookie. `publish_site` validates every GraphQL document against the live schema, extracts the migration footprint, smoke-renders, and snapshots the authored **source** (plus compiled bundle and asset manifest) into an immutable version. `rollback_site` / `site_versions` / `reset_site` restore a version's exact source byte-for-byte. `shell` is a real in-process bash over the draft tree (`grep`/`sed`/`awk`/`find`/pipes) whose writes route through the same transpile + validate + dep-resolve pipeline as `site_write`.
 
-**Migration guard.** Each published version records the set of GraphQL `Type.field` pairs it queries (its *footprint*). A destructive schema op that would break a live site is rejected with an error that teaches the expand → backfill → publish → contract order — over MCP and over the REST API (409). The safety CI would have given you, re-created where an agent can use it.
+**Migration guard.** Each published version records the set of GraphQL `Type.field` pairs it queries (its _footprint_). A destructive schema op that would break a live site is rejected with an error that teaches the expand → backfill → publish → contract order — over MCP and over the REST API (409). The safety CI would have given you, re-created where an agent can use it.
 
 ## Owner vs editor
 
@@ -50,7 +50,7 @@ The toolset is gated by an allowlist, so new tools default to owner-only.
 A single supervisor Worker (deployed as `loki`) serves the apex control plane, the merged `/mcp` endpoint, and every tenant site.
 
 - **Per-tenant isolation.** Each site is its own backend in Durable Object SQLite, addressed by `idFromName(siteId)`:
-  - `TenantDB` holds the site's **content** and runs the agent-cms engine *inside* the DO, against the DO's embedded SQLite (via `SqlStorageD1`, a ~50-line `D1Database` adapter over `ctx.storage.sql` — agent-cms runs unmodified).
+  - `TenantDB` holds the site's **content** and runs the agent-cms engine _inside_ the DO, against the DO's embedded SQLite (via `SqlStorageD1`, a ~50-line `D1Database` adapter over `ctx.storage.sql` — agent-cms runs unmodified).
   - `TenantFeatureDB` holds the site's **feature data**, separate so app table names can't collide with agent-cms's reserved tables.
 
   Name-addressing means no per-tenant binding ceiling (D1 static bindings cap out; DO namespaces scale to millions), idle cost ≈ $0 (hibernated DO = no compute billing), and **30-day point-in-time recovery per tenant** for free.
@@ -83,7 +83,7 @@ See [`DECISIONS.md`](./DECISIONS.md) for the no-bundler architecture rationale (
 
 Live at [loftur.app](https://loftur.app): signup → keyed MCP → build, with a fully isolated content + feature backend per site. The apex, control plane, and `loftur.app/mcp` are in production; public serving at each `{sub}.loftur.app` needs the proxied wildcard `*.loftur.app` DNS record (serving is otherwise proven via the `x-loftur-host` override).
 
-**A note on the name.** The project is being renamed **loki → loftur** ("Loftur" is the modern Icelandic form of *Loptr*, one of Loki's bynames — from *loft* = air/sky, an edge/cloud pun). The deployed Cloudflare Worker keeps the internal name `loki` and the runtime import namespaces stay `loki/runtime` and `loki/schema` — those are deploy/module names, never user-facing; renaming the Worker would strand its Durable Object data.
+**A note on the name.** The project is being renamed **loki → loftur** ("Loftur" is the modern Icelandic form of _Loptr_, one of Loki's bynames — from _loft_ = air/sky, an edge/cloud pun). The deployed Cloudflare Worker keeps the internal name `loki` and the runtime import namespaces stay `loki/runtime` and `loki/schema` — those are deploy/module names, never user-facing; renaming the Worker would strand its Durable Object data.
 
 ## License
 

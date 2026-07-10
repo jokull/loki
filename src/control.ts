@@ -6,6 +6,9 @@
 import type { Env } from "./env";
 import { createSite, validateSubdomain } from "./tenants";
 
+/** Coerce untrusted request input to a string; non-strings (objects/File) → "". */
+const str = (v: unknown): string => (typeof v === "string" ? v : "");
+
 const BRAND = {
   ember: "#cf551d",
   emberDark: "#f0752e",
@@ -146,10 +149,7 @@ function escapeHtml(s: string): string {
 }
 
 /** Route an apex (loftur.app) request: landing, signup, health. */
-export async function handleControlPlane(
-  request: Request,
-  env: Env,
-): Promise<Response> {
+export async function handleControlPlane(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
   const { pathname } = url;
 
@@ -164,12 +164,12 @@ export async function handleControlPlane(
     let wantsJson = ct.includes("application/json");
     if (wantsJson) {
       const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
-      subdomain = String(body.subdomain ?? "");
-      email = String(body.email ?? "");
+      subdomain = str(body.subdomain);
+      email = str(body.email);
     } else {
       const form = await request.formData();
-      subdomain = String(form.get("subdomain") ?? "");
-      email = String(form.get("email") ?? "");
+      subdomain = str(form.get("subdomain"));
+      email = str(form.get("email"));
     }
 
     const result = await createSite(env, subdomain, email || null);

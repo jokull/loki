@@ -166,9 +166,7 @@ export function checkAssetPath(path: string): PathCheck {
 
 export async function sha256Bytes(bytes: Uint8Array): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", bytes);
-  return [...new Uint8Array(digest)]
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 export interface StoredAsset {
@@ -255,9 +253,7 @@ export async function serveStaticAsset(
   }
 
   const etag = `"${entry.hash}"`;
-  const cacheControl = opts.draft
-    ? "no-store"
-    : "public, max-age=300, must-revalidate";
+  const cacheControl = opts.draft ? "no-store" : "public, max-age=300, must-revalidate";
 
   // Cheap 304 without touching R2.
   const inm = request.headers.get("if-none-match");

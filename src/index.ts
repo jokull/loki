@@ -7,6 +7,7 @@ import { serveSite } from "./site/serve";
 import { handleControlPlane } from "./control";
 import { getSiteBySubdomain } from "./tenants";
 import { buildMagicLink, normalizeEmail } from "./auth";
+import { buildAccountMagicLink } from "shared/account";
 import { DEFAULT_SITE_ID } from "./site/store";
 import { cmsExecuteFor } from "./cms-dispatch";
 
@@ -15,11 +16,7 @@ const APEX = "loftur.app";
 
 /** Resolve the effective host (with a dev override header for pre-DNS testing). */
 function effectiveHost(request: Request, url: URL): string {
-  return (
-    request.headers.get("x-loftur-host") ||
-    url.hostname ||
-    ""
-  ).toLowerCase();
+  return (request.headers.get("x-loftur-host") || url.hostname || "").toLowerCase();
 }
 
 /** Friendly 404 for an unclaimed {sub}.loftur.app. */
@@ -43,6 +40,9 @@ export { TenantDB, TenantFeatureDB } from "./tenant-db";
 export { SecretsEntrypoint } from "./secrets";
 export { OutboundEntrypoint } from "./outbound";
 export { AuthEntrypoint } from "./auth";
+export { MailEntrypoint } from "./mail";
+export { LogEntrypoint } from "./logs";
+export { UploadsEntrypoint } from "./uploads";
 
 /**
  * Loopback GraphQL entrypoint for the dynamic site worker.
@@ -62,10 +62,7 @@ export class GraphqlEntrypoint extends WorkerEntrypoint<
     try {
       payload = (await request.json()) as typeof payload;
     } catch {
-      return Response.json(
-        { errors: [{ message: "Invalid JSON body" }] },
-        { status: 400 },
-      );
+      return Response.json({ errors: [{ message: "Invalid JSON body" }] }, { status: 400 });
     }
     if (!payload.query) {
       return Response.json({ errors: [{ message: "Missing 'query'" }] });
@@ -140,11 +137,7 @@ async function serveCmsUpload(request: Request, env: Env): Promise<Response> {
  * uses. The PATCH body is read once here and replayed into the forwarded
  * request so agent-cms still receives it.
  */
-async function guardedCmsForward(
-  request: Request,
-  env: Env,
-  url: URL,
-): Promise<Response> {
+async function guardedCmsForward(request: Request, env: Env, url: URL): Promise<Response> {
   const method = request.method.toUpperCase();
   if (method !== "DELETE" && method !== "PATCH") {
     return getCms(env, url.origin).fetch(request);
@@ -257,12 +250,45 @@ export default {
       return Response.json({ siteId: site.id, email, link });
     }
 
+    // (0c) Admin-only ACCOUNT magic-link minter (WRITE_KEY): signs a control-plane
+    // (owner) sign-in link for the loftur-web dashboard WITHOUT sending email — so
+    // an automated test can drive the account flow. loki + loftur-web share
+    // SECRETS_KEY + shared/account, so a token signed here verifies there.
+    // Body: { email, origin }.
+    if (pathname === "/__accountmagic") {
+      const token = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
+      if (!env.WRITE_KEY || token !== env.WRITE_KEY) {
+        return new Response("Unauthorized", { status: 401 });
+      }
+      let body: { email?: string; origin?: string; redirectTo?: string };
+      try {
+        body = (await request.json()) as typeof body;
+      } catch {
+        return Response.json({ error: "Invalid JSON body" }, { status: 400 });
+      }
+      const email = normalizeEmail(body.email);
+      if (!email) return Response.json({ error: "Invalid email" }, { status: 400 });
+      const origin = body.origin || "https://loftur-web.solberg.workers.dev";
+      const link = await buildAccountMagicLink(env, origin, email, body.redirectTo ?? "/dashboard");
+      return Response.json({ email, link });
+    }
+
     // (1) Apex (loftur.app / www) -> the Loftur control plane (signup, keys).
     // The MCP endpoint is also served here: it resolves the site from the bearer
     // key alone, so an agent can connect at loftur.app/mcp without waiting on the
     // per-subdomain wildcard DNS. (The branded {sub}.loftur.app/mcp also works.)
     if (host === APEX || host === `www.${APEX}`) {
       if (pathname === "/mcp") return handleMcp(request, env, ctx);
+      // Programmatic control-plane surfaces stay on loki: the /api/* JSON API
+      // (site signup returns an apiKey) and /health. Everything else at the apex
+      // — the marketing site, /login, /dashboard, /auth/* — is the loftur-web
+      // control plane, reached via the WEB service binding (no DNS cutover; /mcp
+      // and every *.loftur.app tenant remain served directly here). /__* admin
+      // routes already returned above. Falls back to the in-worker landing in dev.
+      if (pathname === "/health" || pathname.startsWith("/api/")) {
+        return handleControlPlane(request, env);
+      }
+      if (env.WEB) return env.WEB.fetch(request);
       return handleControlPlane(request, env);
     }
 
@@ -271,7 +297,7 @@ export default {
     let siteId = DEFAULT_SITE_ID;
     let isTenant = false;
     if (host.endsWith(`.${APEX}`)) {
-      const sub = host.slice(0, host.length - (`.${APEX}`).length);
+      const sub = host.slice(0, host.length - `.${APEX}`.length);
       const site = await getSiteBySubdomain(env, sub);
       if (!site) return unknownSubdomain(sub);
       siteId = site.id;
@@ -306,8 +332,7 @@ export default {
     try {
       return await serveSite(env, ctx, request, siteId);
     } catch (err) {
-      const message =
-        err instanceof Error ? (err.stack ?? err.message) : String(err);
+      const message = err instanceof Error ? (err.stack ?? err.message) : String(err);
       return new Response(`Loftur serve error:\n${message}`, {
         status: 500,
         headers: { "content-type": "text/plain; charset=utf-8" },

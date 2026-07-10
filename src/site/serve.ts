@@ -14,6 +14,8 @@ import { buildWorkerCode, RUNTIME_VERSION, type Bundle } from "./bundle";
 import { serveModule, serveVendor } from "./assets";
 import { serveStaticAsset } from "./static-assets";
 import { resolveUser, handleAuthRoute } from "../auth";
+import { logLine } from "../logs";
+import { serveUpload } from "../uploads";
 import { assembleDeps, draftDepSnapshot } from "./deps";
 import {
   DEFAULT_SITE_ID,
@@ -58,9 +60,7 @@ export async function buildDraftClientBundle(env: Env, siteId: string): Promise<
 export async function sha256Hex(input: string): Promise<string> {
   const data = new TextEncoder().encode(input);
   const digest = await crypto.subtle.digest("SHA-256", data);
-  return [...new Uint8Array(digest)]
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 /** Deterministic serialization of a bundle for content addressing. */
@@ -88,19 +88,27 @@ function makeGraphqlBinding(
   }) as Fetcher;
 }
 
-/** Parse the writable-model allowlist from the serving tree's loki.config.json. */
-export function parseWritableModels(bundle: Bundle): string[] {
+/** Parse a string-array field from the serving tree's loki.config.json. */
+function parseConfigList(bundle: Bundle, field: string): string[] {
   const raw = bundle["loki.config.json"];
   if (!raw) return [];
   try {
-    const cfg = JSON.parse(raw) as { writableModels?: unknown };
-    const list = cfg?.writableModels;
-    return Array.isArray(list)
-      ? list.filter((m): m is string => typeof m === "string")
-      : [];
+    const cfg = JSON.parse(raw) as Record<string, unknown>;
+    const list = cfg?.[field];
+    return Array.isArray(list) ? list.filter((m): m is string => typeof m === "string") : [];
   } catch {
     return [];
   }
+}
+
+/** Parse the writable-model allowlist from the serving tree's loki.config.json. */
+export function parseWritableModels(bundle: Bundle): string[] {
+  return parseConfigList(bundle, "writableModels");
+}
+
+/** Parse the outbound host allowlist (empty = allow all). */
+export function parseAllowedHosts(bundle: Bundle): string[] {
+  return parseConfigList(bundle, "allowedHosts").map((h) => h.toLowerCase());
 }
 
 async function runSite(
@@ -165,11 +173,25 @@ async function runSite(
   if (exports?.AuthEntrypoint) {
     workerEnv.AUTH = exports.AuthEntrypoint({ props: { siteId } });
   }
+  // Transactional email: env.MAIL.send({to,subject,html/text}) via Cloudflare Email.
+  if (exports?.MailEntrypoint) {
+    workerEnv.MAIL = exports.MailEntrypoint({ props: { siteId } });
+  }
+  // Runtime logs: env.LOG.write(level, message) — surfaced via the site_logs tool.
+  if (exports?.LogEntrypoint) {
+    workerEnv.LOG = exports.LogEntrypoint({ props: { siteId } });
+  }
+  // End-user uploads: env.UPLOADS.put(key, base64) -> R2, served at /__uploads/<key>.
+  if (exports?.UploadsEntrypoint) {
+    workerEnv.UPLOADS = exports.UploadsEntrypoint({ props: { siteId } });
+  }
   // Mediated outbound: any external fetch() the site makes is proxied + logged
   // through OutboundEntrypoint (per-site policy seam). Falls back to no network
   // if the entrypoint is somehow unavailable.
   const outbound = exports?.OutboundEntrypoint
-    ? (exports.OutboundEntrypoint({ props: { siteId } }) as Fetcher)
+    ? (exports.OutboundEntrypoint({
+        props: { siteId, allowedHosts: parseAllowedHosts(bundle) },
+      }) as Fetcher)
     : null;
   // Namespace the isolate by site so two sites with byte-identical bundles never
   // share an isolate (their capability env differs).
@@ -193,10 +215,18 @@ async function runSite(
     return await stub.getEntrypoint().fetch(forwarded);
   } catch (err) {
     const message = err instanceof Error ? (err.stack ?? err.message) : String(err);
-    return new Response(
-      `Site worker error (loader ${loaderId}):\n${message}`,
-      { status: 500, headers: { "content-type": "text/plain; charset=utf-8" } },
-    );
+    const path = (() => {
+      try {
+        return new URL(request.url).pathname;
+      } catch {
+        return "?";
+      }
+    })();
+    ctx.waitUntil(logLine(env, siteId, "error", `render ${path}`, message));
+    return new Response(`Site worker error (loader ${loaderId}):\n${message}`, {
+      status: 500,
+      headers: { "content-type": "text/plain; charset=utf-8" },
+    });
   }
 }
 
@@ -350,6 +380,11 @@ export async function serveSite(
     // RealtimeEntrypoint.publish applies server-side).
     const id = env.CHANNELS.idFromName(`${siteId}:${channel}`);
     return env.CHANNELS.get(id).fetch(request);
+  }
+
+  // Public end-user uploads (env.UPLOADS.put -> /__uploads/<key>), served from R2.
+  if (url.pathname.startsWith("/__uploads/")) {
+    return serveUpload(env, siteId, decodeURIComponent(url.pathname.slice("/__uploads/".length)));
   }
 
   // Browser-facing island assets (served regardless of published state).

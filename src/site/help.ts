@@ -129,8 +129,11 @@ from BOTH a loader (server) and an island (browser):
 - \`.handler({ data, env, request, user })\`: runs IN THE ISOLATE. \`env\` is the
   site's narrow capability env — the SAME one a loader/render gets: \`env.GRAPHQL\`,
   \`env.RECORDS\`, \`env.REALTIME\`, \`env.FEATURES_SQL\`, \`env.SECRETS\` (read stored API
-  keys), \`env.AUTH\` (send magic-link sign-ins), plus MEDIATED outbound \`fetch()\` to
-  external hosts. There is NO raw DB and NO Worker Loader. \`user\` is the signed-in
+  keys), \`env.AUTH\` (send magic-link sign-ins), \`env.MAIL\` (send transactional
+  email), \`env.LOG.write(level, message)\` (runtime logs — read them with the
+  \`site_logs\` tool), \`env.UPLOADS\` (store user-uploaded files), plus MEDIATED
+  outbound \`fetch()\` to external hosts. There is NO raw DB and NO Worker Loader.
+  \`user\` is the signed-in
   end user (\`{ id, email }\`) or \`null\`. The return value is JSON-serialized to
   callers; annotate it (e.g. via
   \`import type { X } from "loki/schema"\`) so its type flows to the caller.
@@ -307,6 +310,52 @@ config needed to start. Combine with \`env.SECRETS\`:
 Only HTTP(S) via \`fetch\` is mediated — raw TCP sockets are not available. Outbound
 fetch is server-only; the browser build never makes these calls.
 
+To RESTRICT egress, add an \`allowedHosts\` array to \`loki.config.json\` — requests to
+any other host are blocked (403). A listed host also allows its subdomains
+(\`stripe.com\` allows \`api.stripe.com\`). Omit it (or leave empty) to allow all hosts.
+
+    { "writableModels": [...], "allowedHosts": ["api.stripe.com", "api.resend.com"] }
+
+## Transactional email (env.MAIL)
+
+Send email from a serverFn/loader with \`env.MAIL.send({ to, subject, html?, text? })\`
+— order confirmations, notifications, etc. (Sign-in links go through the built-in
+auth below, not this.) Returns \`{ ok, id? }\` or \`{ ok:false, error }\`.
+
+    export const notify = serverFn({ method: "POST" })
+      .validator((i: any) => ({ to: String(i?.to || ""), name: String(i?.name || "") }))
+      .handler(async ({ data, env }) => {
+        const r = await env.MAIL.send({
+          to: data.to,
+          subject: "Thanks for your order",
+          html: \`<p>Hi \${data.name}, your order is confirmed.</p>\`,
+          text: \`Hi \${data.name}, your order is confirmed.\`,
+        });
+        if (!r.ok) throw new Error(r.error);
+        return { sent: true };
+      });
+
+Email sends from a shared \`loftur.app\` address (the platform's verified sender).
+Provide \`fromName\` to set the display name and \`replyTo\` for replies. Server-only.
+
+## End-user uploads (env.UPLOADS)
+
+Store files a visitor uploads (avatars, images) with
+\`env.UPLOADS.put(key, base64, contentType?)\` from a serverFn. It returns
+\`{ ok, url }\` where \`url\` is \`/__uploads/<key>\` on your site — reference it in
+markup. Reads are public; \`env.UPLOADS.delete(key)\` removes a file. Gate the write
+on \`user\` (only signed-in visitors upload). Bytes cross as base64, so this is for
+avatars/images, not huge files (10 MB cap).
+
+    export const setAvatar = serverFn({ method: "POST" })
+      .validator((i: any) => ({ base64: String(i?.base64 || "") }))
+      .handler(async ({ data, env, user }) => {
+        if (!user) throw new Error("Sign in first");
+        const r = await env.UPLOADS.put(\`avatars/\${user.id}.png\`, data.base64, "image/png");
+        if (!r.ok) throw new Error(r.error);
+        return { url: r.url };   // e.g. "/__uploads/avatars/<id>.png"
+      });
+
 ## User auth (passwordless email sign-in)
 
 Loki has built-in passwordless auth for your site's END USERS (your visitors — NOT
@@ -314,8 +363,14 @@ the owner/editor MCP tokens). It's magic-link email: the user enters their email
 gets a one-time link, clicks it, and is signed in via a secure HttpOnly cookie. No
 passwords, no schema work, no config — it's always on.
 
+**Roles.** Each user has a \`role\` (default \`"member"\`). The owner sets roles with
+the \`set_user_role\` MCP tool (and lists users with \`list_users\`); the role arrives
+as \`user.role\` in every loader/serverFn, so you can gate admin pages or tiers:
+\`if (user?.role !== "admin") return { redirect: "/" }\`. Roles are free-form strings.
+For richer PROFILES (name, avatar, plan), store a feature-DB row keyed by \`user.id\`.
+
 **Reading the signed-in user.** Every loader / action / serverFn receives \`user\`:
-\`{ id, email }\` when signed in, or \`null\`. Gate content on it:
+\`{ id, email, role }\` when signed in, or \`null\`. Gate content on it:
 
     // routes/members.tsx — a members-only page
     export async function loader({ user }) {
@@ -840,6 +895,32 @@ Then \`publish_site\` — it snapshots the asset manifest into the version and w
   is rejected. The safe schema-change order is:
   expand (add new field) -> backfill content -> publish the site using it ->
   contract (remove the old field).
+
+## Localized content (i18n)
+
+Content is localized out of the box (DatoCMS-style). Every collection/record field
+and every localized content field takes a \`locale: SiteLocale\` argument (plus
+\`fallbackLocales: [SiteLocale!]\`), and each record exposes \`_locales\`. So you don't
+need any special setup — just pass the locale in your query:
+
+    const POST = gql\`
+      query Post($slug: String!, $locale: SiteLocale) {
+        blogPost(filter: { slug: { eq: $slug } }, locale: $locale, fallbackLocales: [en]) {
+          title
+          body { value }
+        }
+      }
+    \`;
+    export async function loader({ env, params }) {
+      const data = await query(env, POST, { slug: params.slug, locale: params.lang });
+      return { post: data.blogPost };
+    }
+
+Drive it from the URL with a language route param — \`routes/[lang]/posts/[slug].tsx\`
+maps to \`/:lang/posts/:slug\`, so \`params.lang\` is the locale. \`SiteLocale\` is an
+enum; introspect it (\`graphql_query\` with \`{ __type(name:"SiteLocale"){ enumValues{ name } } }\`)
+or read \`schema_types\` to see which locales exist. Per-field all-locale values are
+available as \`_allXLocales\`. Manage locales/translations with the content (editor) tools.
 
 ## Shell (edit the working tree like a repo folder)
 

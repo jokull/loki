@@ -5,71 +5,77 @@
   "compatibility_date": "2026-07-01",
   "compatibility_flags": ["nodejs_compat"],
   "vars": {
-    "ENVIRONMENT": "production"
+    "ENVIRONMENT": "production",
   },
   "workers_dev": true,
   "routes": [
     { "pattern": "loftur.app", "custom_domain": true },
-    { "pattern": "*.loftur.app/*", "zone_name": "loftur.app" }
+    { "pattern": "*.loftur.app/*", "zone_name": "loftur.app" },
   ],
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "loftur-db",
       "database_id": "20c00d09-bc49-4fe6-b09c-45e05131f34d",
-      "migrations_dir": "migrations"
+      "migrations_dir": "migrations",
     },
     {
       "binding": "FEATURES_DB",
       "database_name": "loki-features",
-      "database_id": "f4c55fce-3a91-4502-b80e-cea42be9dae8"
-    }
+      "database_id": "f4c55fce-3a91-4502-b80e-cea42be9dae8",
+    },
   ],
   "worker_loaders": [
     {
-      "binding": "LOADER"
-    }
+      "binding": "LOADER",
+    },
+  ],
+  "services": [
+    {
+      "binding": "WEB",
+      "service": "loftur-web",
+    },
   ],
   "r2_buckets": [
     {
       "binding": "ASSETS",
-      "bucket_name": "loki-assets"
-    }
+      "bucket_name": "loki-assets",
+    },
   ],
   "send_email": [
     {
       "name": "EMAIL",
-      "remote": true
-    }
+      "remote": true,
+    },
   ],
   "durable_objects": {
     "bindings": [
       {
         "name": "CHANNELS",
-        "class_name": "ChannelDO"
+        "class_name": "ChannelDO",
       },
       {
         "name": "TENANT_DB",
-        "class_name": "TenantDB"
+        "class_name": "TenantDB",
       },
       {
         "name": "TENANT_FEATURE_DB",
-        "class_name": "TenantFeatureDB"
-      }
-    ]
+        "class_name": "TenantFeatureDB",
+      },
+    ],
   },
   "migrations": [
     {
       "tag": "v1",
-      "new_sqlite_classes": ["ChannelDO"]
+      "new_sqlite_classes": ["ChannelDO"],
     },
     {
       "tag": "v2",
-      "new_sqlite_classes": ["TenantDB"]
+      "new_sqlite_classes": ["TenantDB"],
     },
     {
       "tag": "v3",
-      "new_sqlite_classes": ["TenantFeatureDB"]
-    }
-  ]
+      "new_sqlite_classes": ["TenantFeatureDB"],
+    },
+  ],
 }

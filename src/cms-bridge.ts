@@ -31,12 +31,7 @@ let cachedTools: McpTool[] | null = null;
 
 let rpcId = 0;
 
-async function cmsRpc(
-  env: Env,
-  siteId: string,
-  method: string,
-  params: unknown,
-): Promise<unknown> {
+async function cmsRpc(env: Env, siteId: string, method: string, params: unknown): Promise<unknown> {
   const id = ++rpcId;
   const body = JSON.stringify({ jsonrpc: "2.0", id, method, params });
   const request = new Request("http://internal/mcp", {
@@ -93,9 +88,7 @@ function parseRpcResponse(text: string, contentType: string): RpcMessage | null 
   }
   // Effect's JSON-RPC HTTP transport returns an array of responses.
   if (Array.isArray(parsed)) {
-    const withResult = parsed.find(
-      (m) => m && (m.result !== undefined || m.error !== undefined),
-    );
+    const withResult = parsed.find((m) => m && (m.result !== undefined || m.error !== undefined));
     return (withResult as RpcMessage) ?? null;
   }
   return parsed as RpcMessage;

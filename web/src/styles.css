@@ -1,0 +1,199 @@
+@import "tailwindcss";
+@import "@fontsource-variable/geist";
+@import "@fontsource-variable/geist-mono";
+
+/*
+ * Loftur design system — "Loft".
+ * Minimal monochrome UI (cool near-black ink / near-white paper) punctuated by a
+ * single baby-blue "Sky" accent. Primary/CTA buttons stay ink; Sky owns links,
+ * focus rings, the brand mark, the marketing CTA, and selection.
+ *
+ * shadcn-style semantic tokens only. The stock Tailwind color palette is cleared
+ * below so `bg-blue-500` & friends don't exist — everything routes through tokens.
+ */
+
+/* Dark theme follows the OS preference; a `.dark` class can force it later. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --radius: 0.625rem;
+
+  --background: oklch(0.99 0.003 240);
+  --foreground: oklch(0.17 0.015 262);
+
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.17 0.015 262);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.17 0.015 262);
+
+  /* Primary = ink (the "minimal black" UI). */
+  --primary: oklch(0.21 0.02 262);
+  --primary-foreground: oklch(0.985 0.003 240);
+
+  --secondary: oklch(0.966 0.004 250);
+  --secondary-foreground: oklch(0.21 0.02 262);
+  --muted: oklch(0.966 0.004 250);
+  --muted-foreground: oklch(0.52 0.016 258);
+
+  /* shadcn `accent` = subtle hover surface (faint sky tint), NOT the brand pop. */
+  --accent: oklch(0.955 0.017 238);
+  --accent-foreground: oklch(0.21 0.02 262);
+
+  --destructive: oklch(0.577 0.208 24);
+  --destructive-foreground: oklch(0.985 0.003 240);
+
+  --border: oklch(0.918 0.006 255);
+  --input: oklch(0.918 0.006 255);
+
+  /* Sky — the one baby-blue accent. `sky` is the fill (ink text on it);
+     `link` is the legible-on-paper stop for text & the focus ring. */
+  --sky: oklch(0.83 0.09 233);
+  --sky-foreground: oklch(0.19 0.02 262);
+  --link: oklch(0.55 0.16 250);
+  --ring: oklch(0.55 0.16 250);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: oklch(0.155 0.012 262);
+    --foreground: oklch(0.96 0.004 240);
+
+    --card: oklch(0.192 0.013 262);
+    --card-foreground: oklch(0.96 0.004 240);
+    --popover: oklch(0.192 0.013 262);
+    --popover-foreground: oklch(0.96 0.004 240);
+
+    --primary: oklch(0.97 0.004 240);
+    --primary-foreground: oklch(0.19 0.02 262);
+
+    --secondary: oklch(0.245 0.013 260);
+    --secondary-foreground: oklch(0.96 0.004 240);
+    --muted: oklch(0.245 0.013 260);
+    --muted-foreground: oklch(0.7 0.016 250);
+
+    --accent: oklch(0.28 0.025 245);
+    --accent-foreground: oklch(0.96 0.004 240);
+
+    --destructive: oklch(0.62 0.19 22);
+    --destructive-foreground: oklch(0.985 0 0);
+
+    --border: oklch(1 0 0 / 9%);
+    --input: oklch(1 0 0 / 12%);
+
+    --sky: oklch(0.8 0.11 233);
+    --sky-foreground: oklch(0.17 0.02 262);
+    --link: oklch(0.8 0.11 233);
+    --ring: oklch(0.8 0.11 233);
+  }
+}
+
+/* Explicit-toggle parity (mirrors the media query for a future theme switch). */
+.dark {
+  --background: oklch(0.155 0.012 262);
+  --foreground: oklch(0.96 0.004 240);
+  --card: oklch(0.192 0.013 262);
+  --card-foreground: oklch(0.96 0.004 240);
+  --popover: oklch(0.192 0.013 262);
+  --popover-foreground: oklch(0.96 0.004 240);
+  --primary: oklch(0.97 0.004 240);
+  --primary-foreground: oklch(0.19 0.02 262);
+  --secondary: oklch(0.245 0.013 260);
+  --secondary-foreground: oklch(0.96 0.004 240);
+  --muted: oklch(0.245 0.013 260);
+  --muted-foreground: oklch(0.7 0.016 250);
+  --accent: oklch(0.28 0.025 245);
+  --accent-foreground: oklch(0.96 0.004 240);
+  --destructive: oklch(0.62 0.19 22);
+  --destructive-foreground: oklch(0.985 0 0);
+  --border: oklch(1 0 0 / 9%);
+  --input: oklch(1 0 0 / 12%);
+  --sky: oklch(0.8 0.11 233);
+  --sky-foreground: oklch(0.17 0.02 262);
+  --link: oklch(0.8 0.11 233);
+  --ring: oklch(0.8 0.11 233);
+}
+
+@theme inline {
+  /* Wipe Tailwind's stock palette — only semantic tokens survive. */
+  --color-*: initial;
+  --color-transparent: transparent;
+  --color-current: currentColor;
+  --color-white: #fff;
+  --color-black: #000;
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-sky: var(--sky);
+  --color-sky-foreground: var(--sky-foreground);
+  --color-link: var(--link);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  --font-sans: "Geist Variable", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: "Geist Mono Variable", ui-monospace, "SF Mono", Menlo, monospace;
+}
+
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+  body {
+    background-color: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  ::selection {
+    background-color: color-mix(in oklch, var(--sky) 40%, transparent);
+    color: var(--foreground);
+  }
+  h1,
+  h2,
+  h3 {
+    letter-spacing: -0.02em;
+    text-wrap: balance;
+  }
+  /* Content links inside prose default to Sky; component links opt out via class. */
+  a:not([class]) {
+    color: var(--link);
+    text-decoration: none;
+  }
+  a:not([class]):hover {
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+  code:not([class]),
+  kbd {
+    font-family: var(--font-mono);
+    font-size: 0.85em;
+    background-color: var(--muted);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 0.05em 0.34em;
+  }
+}

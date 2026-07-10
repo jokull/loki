@@ -26,9 +26,7 @@ export const GUARDED_TOOLS = new Set([
   "update_field",
 ]);
 
-export type GuardResult =
-  | { allowed: true }
-  | { allowed: false; reason: string };
+export type GuardResult = { allowed: true } | { allowed: false; reason: string };
 
 // ---- normalized operation descriptor ----------------------------------------
 
@@ -57,10 +55,7 @@ interface ResolvedField {
 }
 
 /** Resolve a model reference (id or api_key) to its row. */
-async function resolveModel(
-  env: Env,
-  ref: string,
-): Promise<ResolvedModel | null> {
+async function resolveModel(env: Env, ref: string): Promise<ResolvedModel | null> {
   return await env.DB.prepare(
     `SELECT id, api_key FROM models WHERE id = ?1 OR api_key = ?1 LIMIT 1`,
   )
@@ -69,10 +64,7 @@ async function resolveModel(
 }
 
 /** Resolve a field reference (id or api_key) to its row + parent model api_key. */
-async function resolveField(
-  env: Env,
-  ref: string,
-): Promise<ResolvedField | null> {
+async function resolveField(env: Env, ref: string): Promise<ResolvedField | null> {
   return await env.DB.prepare(
     `SELECT f.id AS id, f.api_key AS api_key, f.field_type AS field_type,
             m.api_key AS model_api_key
@@ -115,10 +107,7 @@ async function loadPublishedFootprint(
 
 // ---- instructive rejection message ------------------------------------------
 
-function contractSequence(
-  targetKind: "field" | "model",
-  targetLabel: string,
-): string {
+function contractSequence(targetKind: "field" | "model", targetLabel: string): string {
   const addNew =
     targetKind === "field"
       ? "add the replacement field (create_field) so old and new coexist"
@@ -170,9 +159,7 @@ async function checkModelContract(
 
   const surface = modelSurface(model.api_key);
   const typeHit = published.footprint.types.includes(surface.recordType);
-  const rootHits = surface.rootFields.filter((f) =>
-    published.footprint.rootFields.includes(f),
-  );
+  const rootHits = surface.rootFields.filter((f) => published.footprint.rootFields.includes(f));
   if (!typeHit && rootHits.length === 0) {
     return { allowed: true };
   }
@@ -200,8 +187,7 @@ async function guardOp(env: Env, siteId: string, opDesc: SchemaOp): Promise<Guar
     // Unknown target: let agent-cms produce the authoritative "not found".
     if (!model) return { allowed: true };
     if (opDesc.op === "update") {
-      const rename =
-        opDesc.newApiKey != null && opDesc.newApiKey !== model.api_key;
+      const rename = opDesc.newApiKey != null && opDesc.newApiKey !== model.api_key;
       if (!rename) return { allowed: true }; // non-breaking update
     }
     return await checkModelContract(env, siteId, model);
@@ -210,10 +196,8 @@ async function guardOp(env: Env, siteId: string, opDesc: SchemaOp): Promise<Guar
   const field = await resolveField(env, opDesc.ref);
   if (!field) return { allowed: true };
   if (opDesc.op === "update") {
-    const rename =
-      opDesc.newApiKey != null && opDesc.newApiKey !== field.api_key;
-    const retype =
-      opDesc.newFieldType != null && opDesc.newFieldType !== field.field_type;
+    const rename = opDesc.newApiKey != null && opDesc.newApiKey !== field.api_key;
+    const retype = opDesc.newFieldType != null && opDesc.newFieldType !== field.field_type;
     if (!rename && !retype) return { allowed: true }; // non-breaking update
   }
   return await checkFieldContract(env, siteId, field);
@@ -290,9 +274,7 @@ export function classifyRestSchemaOp(
   if (m !== "DELETE" && m !== "PATCH") return null;
 
   // /api/models/:id/fields/:fieldId
-  const fieldMatch = /^\/api\/models\/([^/]+)\/fields\/([^/]+)\/?$/.exec(
-    pathname,
-  );
+  const fieldMatch = /^\/api\/models\/([^/]+)\/fields\/([^/]+)\/?$/.exec(pathname);
   if (fieldMatch) {
     const ref = decodeURIComponent(fieldMatch[2]);
     if (m === "DELETE") return { kind: "field", op: "delete", ref };

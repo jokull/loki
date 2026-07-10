@@ -102,10 +102,7 @@ export interface DocError {
 }
 
 /** Validate each document; returns per-document errors (empty = all valid). */
-export function validateDocuments(
-  schema: GraphQLSchema,
-  docs: ExtractedDoc[],
-): DocError[] {
+export function validateDocuments(schema: GraphQLSchema, docs: ExtractedDoc[]): DocError[] {
   const problems: DocError[] = [];
   for (const doc of docs) {
     try {
@@ -125,10 +122,7 @@ export function validateDocuments(
 }
 
 /** Walk every valid document with TypeInfo to compute the footprint. */
-export function computeFootprint(
-  schema: GraphQLSchema,
-  docs: ExtractedDoc[],
-): Footprint {
+export function computeFootprint(schema: GraphQLSchema, docs: ExtractedDoc[]): Footprint {
   const fields = new Set<string>();
   const types = new Set<string>();
   const rootFields = new Set<string>();
@@ -136,9 +130,7 @@ export function computeFootprint(
   const mutationType = schema.getMutationType();
   const subscriptionType = schema.getSubscriptionType();
   const rootNames = new Set(
-    [queryType, mutationType, subscriptionType]
-      .filter(Boolean)
-      .map((t) => t!.name),
+    [queryType, mutationType, subscriptionType].filter(Boolean).map((t) => t!.name),
   );
 
   for (const doc of docs) {
@@ -212,8 +204,7 @@ export async function validateSiteConfig(
   if (!Array.isArray(wm) || !wm.every((m) => typeof m === "string")) {
     return {
       ok: false,
-      error:
-        'loki.config.json "writableModels" must be an array of model api_key strings.',
+      error: 'loki.config.json "writableModels" must be an array of model api_key strings.',
     };
   }
   if (wm.length === 0) return { ok: true, models: [] };
@@ -221,14 +212,12 @@ export async function validateSiteConfig(
   // Model list is per-site: default site → shared D1; tenant → its own CMS (DO).
   let modelKeys: string[];
   if (siteId === DEFAULT_SITE_ID) {
-    const { results } = await env.DB.prepare(
-      "SELECT api_key FROM models",
-    ).all<{ api_key: string }>();
+    const { results } = await env.DB.prepare("SELECT api_key FROM models").all<{
+      api_key: string;
+    }>();
     modelKeys = (results ?? []).map((r) => r.api_key);
   } else {
-    modelKeys = await env.TENANT_DB.get(
-      env.TENANT_DB.idFromName(siteId),
-    ).modelApiKeys();
+    modelKeys = await env.TENANT_DB.get(env.TENANT_DB.idFromName(siteId)).modelApiKeys();
   }
   const known = new Set(modelKeys);
   const missing = (wm as string[]).filter((m) => !known.has(m));

@@ -93,11 +93,7 @@ export async function listFiles(env: Env, siteId: string): Promise<SiteFile[]> {
   return results ?? [];
 }
 
-export async function readFile(
-  env: Env,
-  siteId: string,
-  path: string,
-): Promise<SiteFile | null> {
+export async function readFile(env: Env, siteId: string, path: string): Promise<SiteFile | null> {
   return await env.DB.prepare(
     "SELECT path, source, compiled, client_compiled, updated_at FROM site_files WHERE site_id = ? AND path = ?",
   )
@@ -126,14 +122,8 @@ export async function writeFile(
     .run();
 }
 
-export async function deleteFile(
-  env: Env,
-  siteId: string,
-  path: string,
-): Promise<boolean> {
-  const res = await env.DB.prepare(
-    "DELETE FROM site_files WHERE site_id = ? AND path = ?",
-  )
+export async function deleteFile(env: Env, siteId: string, path: string): Promise<boolean> {
+  const res = await env.DB.prepare("DELETE FROM site_files WHERE site_id = ? AND path = ?")
     .bind(siteId, path)
     .run();
   return (res.meta?.changes ?? 0) > 0;
@@ -174,11 +164,7 @@ export async function insertVersion(
 }
 
 /** Fetch a version by its per-site number `n`. */
-export async function getVersion(
-  env: Env,
-  siteId: string,
-  n: number,
-): Promise<SiteVersion | null> {
+export async function getVersion(env: Env, siteId: string, n: number): Promise<SiteVersion | null> {
   return await env.DB.prepare(
     "SELECT id, n, site_id, created_at, message, bundle, footprint, assets, client_bundle, deps, source_bundle FROM site_versions WHERE site_id = ? AND n = ?",
   )
@@ -187,9 +173,7 @@ export async function getVersion(
 }
 
 /** Parse a version row's snapshotted source (empty on legacy pre-0006 rows). */
-export function versionSourceBundle(
-  version: SiteVersion,
-): Record<string, string> {
+export function versionSourceBundle(version: SiteVersion): Record<string, string> {
   if (!version.source_bundle) return {};
   try {
     const parsed = JSON.parse(version.source_bundle) as Record<string, string>;
@@ -212,11 +196,7 @@ export function versionDepSnapshot(version: SiteVersion): DepSnapshot {
 
 // ---- site_deps (resolver lockfile) ------------------------------------------
 
-export async function getDep(
-  env: Env,
-  siteId: string,
-  specifier: string,
-): Promise<SiteDep | null> {
+export async function getDep(env: Env, siteId: string, specifier: string): Promise<SiteDep | null> {
   return await env.DB.prepare(
     "SELECT specifier, version, entry_key, module_manifest, dep_hash, created_at FROM site_deps WHERE site_id = ? AND specifier = ?",
   )
@@ -270,9 +250,7 @@ export async function getDepEntry(
 }
 
 /** Parse a version row's snapshotted browser stubs (empty on legacy rows). */
-export function versionClientBundle(
-  version: SiteVersion,
-): Record<string, string> {
+export function versionClientBundle(version: SiteVersion): Record<string, string> {
   if (!version.client_bundle) return {};
   try {
     const parsed = JSON.parse(version.client_bundle) as Record<string, string>;
@@ -354,9 +332,7 @@ export async function restoreDraftFromVersion(
   });
 
   // Full replace in one implicit transaction: the version is the whole tree.
-  const stmts = [
-    env.DB.prepare("DELETE FROM site_files WHERE site_id = ?").bind(siteId),
-  ];
+  const stmts = [env.DB.prepare("DELETE FROM site_files WHERE site_id = ?").bind(siteId)];
   for (const r of fileRows) {
     stmts.push(
       env.DB.prepare(
@@ -365,9 +341,7 @@ export async function restoreDraftFromVersion(
       ).bind(siteId, r.path, r.source, r.compiled, r.clientCompiled),
     );
   }
-  stmts.push(
-    env.DB.prepare("DELETE FROM site_assets WHERE site_id = ?").bind(siteId),
-  );
+  stmts.push(env.DB.prepare("DELETE FROM site_assets WHERE site_id = ?").bind(siteId));
   for (const [path, a] of Object.entries(assets)) {
     stmts.push(
       env.DB.prepare(
@@ -396,11 +370,7 @@ export async function listAssets(env: Env, siteId: string): Promise<SiteAsset[]>
   return results ?? [];
 }
 
-export async function readAsset(
-  env: Env,
-  siteId: string,
-  path: string,
-): Promise<SiteAsset | null> {
+export async function readAsset(env: Env, siteId: string, path: string): Promise<SiteAsset | null> {
   return await env.DB.prepare(
     "SELECT path, hash, content_type, size, updated_at FROM site_assets WHERE site_id = ? AND path = ?",
   )
@@ -429,24 +399,15 @@ export async function upsertAsset(
     .run();
 }
 
-export async function deleteAsset(
-  env: Env,
-  siteId: string,
-  path: string,
-): Promise<boolean> {
-  const res = await env.DB.prepare(
-    "DELETE FROM site_assets WHERE site_id = ? AND path = ?",
-  )
+export async function deleteAsset(env: Env, siteId: string, path: string): Promise<boolean> {
+  const res = await env.DB.prepare("DELETE FROM site_assets WHERE site_id = ? AND path = ?")
     .bind(siteId, path)
     .run();
   return (res.meta?.changes ?? 0) > 0;
 }
 
 /** Build the draft asset manifest (path -> {hash,contentType,size}). */
-export async function buildDraftAssetManifest(
-  env: Env,
-  siteId: string,
-): Promise<AssetManifest> {
+export async function buildDraftAssetManifest(env: Env, siteId: string): Promise<AssetManifest> {
   const rows = await listAssets(env, siteId);
   const manifest: AssetManifest = {};
   for (const r of rows) {
@@ -461,14 +422,8 @@ export async function buildDraftAssetManifest(
 
 // ---- site_state (key/value) --------------------------------------------------
 
-export async function getState(
-  env: Env,
-  siteId: string,
-  key: string,
-): Promise<string | null> {
-  const row = await env.DB.prepare(
-    "SELECT value FROM site_state WHERE site_id = ? AND key = ?",
-  )
+export async function getState(env: Env, siteId: string, key: string): Promise<string | null> {
+  const row = await env.DB.prepare("SELECT value FROM site_state WHERE site_id = ? AND key = ?")
     .bind(siteId, key)
     .first<{ value: string }>();
   return row?.value ?? null;
@@ -489,10 +444,7 @@ export async function setState(
 }
 
 /** The published version number (`n`) for this site, or null if none. */
-export async function getPublishedVersionId(
-  env: Env,
-  siteId: string,
-): Promise<number | null> {
+export async function getPublishedVersionId(env: Env, siteId: string): Promise<number | null> {
   const v = await getState(env, siteId, "published_version");
   if (v == null) return null;
   const n = Number(v);
