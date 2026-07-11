@@ -1,0 +1,11 @@
+#!/bin/sh
+# Block committing a locally-linked agent-cms (dev-only). Run `pnpm cms:unlink`
+# to restore the published dependency first. Installed via the `prepare` script
+# (git config core.hooksPath .githooks).
+if git diff --cached --name-only | grep -qx 'package.json'; then
+  if grep -q '"agent-cms"[[:space:]]*:[[:space:]]*"link:' package.json; then
+    echo "✖ agent-cms is linked to your local checkout (link:../agent-cms)." >&2
+    echo "  Run 'pnpm cms:unlink' before committing." >&2
+    exit 1
+  fi
+fi
