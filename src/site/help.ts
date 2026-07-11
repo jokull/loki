@@ -388,13 +388,14 @@ For richer PROFILES (name, avatar, plan), store a feature-DB row keyed by \`user
 \`{ id, email, role }\` when signed in, or \`null\`. Gate content on it:
 
     // routes/members.tsx — a members-only page
+    import { requireUser } from "loki/runtime";
     export async function loader({ user }) {
-      if (!user) return { redirect: "/login" };   // or render a signed-out view
-      return { user };
+      return requireUser(user) || { user };   // 303 -> /login when signed out
     }
     export default function Members({ user }) {
       return <main><h1>Welcome, {user.email}</h1></main>;
     }
+    // admin page: requireRole(user, "admin") gates to "/" for non-admins.
 
 A loader that returns \`{ redirect: "/path" }\` (or a \`Response\`, e.g.
 \`Response.redirect(url, 303)\`) performs a real 303 redirect BEFORE the component
@@ -560,7 +561,9 @@ correctly with no manual plumbing.
   \`featuresDriver(env)\` (drizzle sqlite-proxy driver for the feature DB, server-only —
   see "Feature database" above),
   \`HttpError\` (throw \`new HttpError(message, status)\` from a serverFn/action to send
-  that status + message to the caller — see "Server functions"), and
+  that status + message to the caller — see "Server functions"),
+  \`requireUser(user, to?)\` / \`requireRole(user, role, to?)\` (loader/action auth
+  gates — return the sentinel or null: \`return requireUser(user) || { user }\`), and
   \`connectChannel(name, onMessage)\` (client-only realtime subscription — see
   "Realtime" below).
 - ANY npm package (no allowlist): resolved via esm.sh at write time and

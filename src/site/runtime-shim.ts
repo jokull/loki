@@ -177,6 +177,18 @@ export class HttpError extends Error {
     this.expose = true;
   }
 }
+
+// Auth gates for loaders/actions. Return the sentinel if the gate fails (loaders
+// honor a { redirect }), else null so you can \`return requireUser(user) || props\`.
+//   export async function loader({ user }) { return requireUser(user) || { user }; }
+export function requireUser(user, to) {
+  return user ? null : { redirect: to || "/login" };
+}
+export function requireRole(user, role, to) {
+  if (!user) return { redirect: to || "/login" };
+  if (user.role !== role) return { redirect: to || "/" };
+  return null;
+}
 `;
 
 // --- server form: query + routing + Island SSR helper ------------------------
