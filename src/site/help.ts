@@ -164,7 +164,21 @@ preview (reusing the cookie jar from \`preview_site\`):
 
 A GET serverFn instead: \`curl -sb jar "<origin>/__fn/draft/<id>?data=%7B%7D"\`.
 Responses: \`200\` with the JSON result, \`400\` on a validator throw / bad input,
-\`404\` unknown id, \`500\` on a handler throw (logged server-side, generic message).
+\`404\` unknown id, \`500\` on a plain handler throw (logged server-side, GENERIC
+message so internals never leak). To send a SPECIFIC status + message to the
+caller (the browser stub throws \`Error(message)\`, so an island can show it), throw
+an \`HttpError\` from \`loki/runtime\`:
+
+    import { serverFn, HttpError } from "loki/runtime";
+    export const buy = serverFn({ method: "POST" })
+      .handler(async ({ user }) => {
+        if (!user) throw new HttpError("Sign in first", 401); // -> {status:401,error:"Sign in first"}
+        // ...
+      });
+
+A plain \`throw new Error("db creds xyz")\` stays a generic 500 (never surfaced);
+only \`HttpError\` opts a message into the response. Use it for auth gates
+(401/403) and user-facing validation you want the UI to display.
 
 ### Two ways to call the SAME imported function
 
@@ -542,7 +556,9 @@ correctly with no manual plumbing.
   \`serverFn({...}).validator(...).handler(...)\` (a typed, validated server function
   callable from a loader OR a browser island — see "Server functions" below),
   \`featuresDriver(env)\` (drizzle sqlite-proxy driver for the feature DB, server-only —
-  see "Feature database" above), and
+  see "Feature database" above),
+  \`HttpError\` (throw \`new HttpError(message, status)\` from a serverFn/action to send
+  that status + message to the caller — see "Server functions"), and
   \`connectChannel(name, onMessage)\` (client-only realtime subscription — see
   "Realtime" below).
 - ANY npm package (no allowlist): resolved via esm.sh at write time and

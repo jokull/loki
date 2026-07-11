@@ -164,6 +164,19 @@ export function renderStructuredText(value) {
   if (!doc) return null;
   return h(Fragment, null, __dastChildren(doc));
 }
+
+// Throw from a serverFn handler (or action/loader) to send a SPECIFIC status +
+// message to the caller. A plain \`throw new Error(...)\` stays a generic 500 so
+// internal details never leak; an HttpError opts in to surfacing its message.
+//   throw new HttpError("Sign in first", 401)
+export class HttpError extends Error {
+  constructor(message, status) {
+    super(message);
+    this.name = "HttpError";
+    this.status = status || 400;
+    this.expose = true;
+  }
+}
 `;
 
 // --- server form: query + routing + Island SSR helper ------------------------
@@ -309,6 +322,11 @@ export function serverFn(config) {
             "serverFn",
           );
         } catch (_) { /* logging must not mask the original error */ }
+      }
+      // An HttpError (e.expose) opts into surfacing its message + status to the
+      // caller; anything else is a generic 500 so internals never leak.
+      if (e && e.expose) {
+        return { status: (e.status | 0) || 400, error: (e.message || "Error") };
       }
       return { status: 500, error: "Server function failed." };
     }
