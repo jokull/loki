@@ -395,10 +395,11 @@ For richer PROFILES (name, avatar, plan), store a feature-DB row keyed by \`user
       return <main><h1>Welcome, {user.email}</h1></main>;
     }
 
-(To hard-redirect from a loader, return a value your component acts on, or do the
-gate in an \`action\`/\`serverFn\` that returns \`{ redirect }\`. A loader's return is
-props — it does not itself redirect; branch in the component, or guard writes in a
-serverFn where you can \`throw\`.)
+A loader that returns \`{ redirect: "/path" }\` (or a \`Response\`, e.g.
+\`Response.redirect(url, 303)\`) performs a real 303 redirect BEFORE the component
+renders — so the gate above never leaks the members-only markup. Any other object
+is passed to the component as props. (You can also gate a write in a serverFn and
+\`throw new HttpError("Sign in first", 401)\`.)
 
 **Sending the sign-in link.** Call \`env.AUTH.requestMagicLink(email, redirectTo?)\`
 from a serverFn or action. It emails the user a link that returns them to

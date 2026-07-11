@@ -720,6 +720,13 @@ export async function handleRequest(request, env, ctx, config) {
   let props = {};
   if (typeof mod.loader === "function") {
     const loaded = await mod.loader({ env, params: matched.params, request, user });
+    // A loader may GATE: honor a Response or a { redirect } sentinel (same as an
+    // action) so \`if (!user) return { redirect: "/login" }\` actually redirects
+    // (303) instead of silently rendering — and leaking — the gated component.
+    if (loaded instanceof Response) return loaded;
+    if (loaded && typeof loaded === "object" && typeof loaded.redirect === "string") {
+      return new Response(null, { status: 303, headers: { location: loaded.redirect } });
+    }
     if (loaded && typeof loaded === "object") props = loaded;
   }
 
