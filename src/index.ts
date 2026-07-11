@@ -30,6 +30,15 @@ function unknownSubdomain(sub: string): Response {
   });
 }
 
+/** An owner-paused (unpublished) site — 503 so search engines keep the index. */
+function sitePaused(sub: string): Response {
+  const html = `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${sub}.loftur.app</title><body style="margin:0;background:#0d1016;color:#e9edf3;font:16px/1.6 ui-sans-serif,system-ui,sans-serif;display:grid;place-items:center;min-height:100vh"><div style="max-width:32rem;padding:2rem;text-align:center"><p style="font-family:ui-monospace,Menlo,monospace;letter-spacing:.14em;text-transform:uppercase;color:#7e8896;font-size:.8rem">◆ Loftur</p><h1 style="font-family:Charter,Georgia,serif;font-size:2rem;margin:1rem 0">This site is paused</h1><p style="color:#b4bdca">${sub}.loftur.app is temporarily offline.</p></div></body>`;
+  return new Response(html, {
+    status: 503,
+    headers: { "content-type": "text/html; charset=utf-8", "retry-after": "3600" },
+  });
+}
+
 export type { Env };
 
 // Durable Object + ctx.exports entrypoints for the dynamic site worker. They are
@@ -335,6 +344,16 @@ export default {
       const sub = host.slice(0, host.length - `.${APEX}`.length);
       const site = await getSiteBySubdomain(env, sub);
       if (!site) return unknownSubdomain(sub);
+      // Lifecycle gate. `unpublished` = an owner pause (503, retains index).
+      // `deleted`/`suspended`/`purging` are served IDENTICALLY to a never-claimed
+      // name (unknownSubdomain 404) — the public must not be able to tell a
+      // soon-to-free or abuse-held name from any other unclaimed one.
+      if (site.status !== "active") {
+        // MCP + the WRITE_KEY-gated /__* admin routes already returned above, so
+        // an owner can still restore/republish a paused/deleted site over MCP.
+        if (site.status === "unpublished") return sitePaused(sub);
+        return unknownSubdomain(sub);
+      }
       siteId = site.id;
       isTenant = true;
     }

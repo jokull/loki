@@ -31,13 +31,22 @@ export interface DataEnv {
 
 // ---- sites ------------------------------------------------------------------
 
+export type SiteStatus = "active" | "unpublished" | "deleted" | "suspended" | "purging";
+
 export interface Site {
   id: string;
   subdomain: string;
   email: string | null;
   api_key_hash: string;
   created_at: string;
+  status: SiteStatus;
+  deleted_at: string | null;
+  unpublished_at: string | null;
+  suspended_at: string | null;
 }
+
+const SITE_COLS =
+  "id, subdomain, email, api_key_hash, created_at, status, deleted_at, unpublished_at, suspended_at";
 
 /** Subdomains reserved for the platform itself. */
 const RESERVED = new Set([
@@ -134,26 +143,18 @@ function generateSiteId(): string {
 }
 
 export async function getSiteBySubdomain(env: DataEnv, subdomain: string): Promise<Site | null> {
-  return env.DB.prepare(
-    "SELECT id, subdomain, email, api_key_hash, created_at FROM sites WHERE subdomain = ?",
-  )
+  return env.DB.prepare(`SELECT ${SITE_COLS} FROM sites WHERE subdomain = ?`)
     .bind(subdomain.toLowerCase())
     .first<Site>();
 }
 
 export async function getSiteById(env: DataEnv, id: string): Promise<Site | null> {
-  return env.DB.prepare(
-    "SELECT id, subdomain, email, api_key_hash, created_at FROM sites WHERE id = ?",
-  )
-    .bind(id)
-    .first<Site>();
+  return env.DB.prepare(`SELECT ${SITE_COLS} FROM sites WHERE id = ?`).bind(id).first<Site>();
 }
 
 export async function getSiteByApiKey(env: DataEnv, key: string): Promise<Site | null> {
   const hash = await hashApiKey(key);
-  return env.DB.prepare(
-    "SELECT id, subdomain, email, api_key_hash, created_at FROM sites WHERE api_key_hash = ?",
-  )
+  return env.DB.prepare(`SELECT ${SITE_COLS} FROM sites WHERE api_key_hash = ?`)
     .bind(hash)
     .first<Site>();
 }
@@ -161,7 +162,7 @@ export async function getSiteByApiKey(env: DataEnv, key: string): Promise<Site |
 /** All sites owned by an email (the dashboard's "my sites"). */
 export async function getSitesByEmail(env: DataEnv, email: string): Promise<Site[]> {
   const { results } = await env.DB.prepare(
-    "SELECT id, subdomain, email, api_key_hash, created_at FROM sites WHERE lower(email) = ? ORDER BY created_at DESC",
+    `SELECT ${SITE_COLS} FROM sites WHERE lower(email) = ? ORDER BY created_at DESC`,
   )
     .bind(email.trim().toLowerCase())
     .all<Site>();
@@ -212,6 +213,10 @@ export async function createSite(
     email,
     api_key_hash: apiKeyHash,
     created_at: new Date().toISOString(),
+    status: "active",
+    deleted_at: null,
+    unpublished_at: null,
+    suspended_at: null,
   };
   return { ok: true, site, apiKey };
 }
@@ -432,4 +437,130 @@ export async function revokeAccountToken(
     .bind(id, email.trim().toLowerCase())
     .run();
   return (res.meta?.changes ?? 0) > 0;
+}
+
+// ---- site lifecycle ---------------------------------------------------------
+// See PLAN.md. Owner ops flip status; a daily reaper hard-purges `deleted`
+// sites > 7 days old. Deleting HOLDS the subdomain lease until purge.
+
+export const RECOVERY_WINDOW_DAYS = 7;
+export const PURGE_LOCK_HOURS = 24; // purge_site can't run until 24h after delete
+export const DEFAULT_SITE_QUOTA = 5;
+
+/**
+ * Normalize an account email so aliases collapse to ONE account (can't farm the
+ * free-site quota): lowercase + trim + strip a `+tag` from the local part. NOT
+ * gemail dot-collapsing (provider-specific). The magic link is still delivered to
+ * the raw address; identity/quota key on this.
+ */
+export function normalizeAccountEmail(raw: string | null | undefined): string {
+  const e = (raw ?? "").trim().toLowerCase();
+  const at = e.lastIndexOf("@");
+  if (at <= 0) return e;
+  const local = e.slice(0, at).replace(/\+.*$/, "");
+  return local + e.slice(at);
+}
+
+type LifecycleResult = { ok: true; site: Site } | { ok: false; error: string };
+
+async function transition(
+  env: DataEnv,
+  siteId: string,
+  set: string,
+  binds: unknown[],
+): Promise<Site | null> {
+  await env.DB.prepare(`UPDATE sites SET ${set} WHERE id = ?`)
+    .bind(...binds, siteId)
+    .run();
+  return getSiteById(env, siteId);
+}
+
+/** Soft-delete: active|unpublished -> deleted (offline, 7-day recovery, name held). */
+export async function deleteSite(env: DataEnv, site: Site): Promise<LifecycleResult> {
+  if (site.status === "suspended")
+    return { ok: false, error: "This site is suspended by the platform; contact support." };
+  if (site.status === "deleted")
+    return {
+      ok: false,
+      error: `"${site.subdomain}" is already deleted (recoverable until it reaps).`,
+    };
+  if (site.status === "purging") return { ok: false, error: "This site is being purged." };
+  const updated = await transition(env, site.id, "status = 'deleted', deleted_at = ?", [
+    new Date().toISOString(),
+  ]);
+  return updated ? { ok: true, site: updated } : { ok: false, error: "Site not found." };
+}
+
+/** Undo a soft-delete within the window: deleted -> active (full restore). */
+export async function restoreSite(env: DataEnv, site: Site): Promise<LifecycleResult> {
+  if (site.status === "suspended")
+    return { ok: false, error: "This site is suspended by the platform; contact support." };
+  if (site.status !== "deleted")
+    return { ok: false, error: `"${site.subdomain}" is not deleted (status: ${site.status}).` };
+  const updated = await transition(env, site.id, "status = 'active', deleted_at = NULL", []);
+  return updated ? { ok: true, site: updated } : { ok: false, error: "Site not found." };
+}
+
+/** Pause a live site: active -> unpublished (offline, data intact, no countdown). */
+export async function unpublishSite(env: DataEnv, site: Site): Promise<LifecycleResult> {
+  if (site.status === "suspended")
+    return { ok: false, error: "This site is suspended by the platform; contact support." };
+  if (site.status === "unpublished")
+    return { ok: false, error: `"${site.subdomain}" is already unpublished.` };
+  if (site.status !== "active")
+    return { ok: false, error: `Can't unpublish a site with status "${site.status}".` };
+  const updated = await transition(env, site.id, "status = 'unpublished', unpublished_at = ?", [
+    new Date().toISOString(),
+  ]);
+  return updated ? { ok: true, site: updated } : { ok: false, error: "Site not found." };
+}
+
+/** Resume a paused site: unpublished -> active. */
+export async function republishSite(env: DataEnv, site: Site): Promise<LifecycleResult> {
+  if (site.status === "suspended")
+    return { ok: false, error: "This site is suspended by the platform; contact support." };
+  if (site.status !== "unpublished")
+    return { ok: false, error: `"${site.subdomain}" is not unpublished (status: ${site.status}).` };
+  const updated = await transition(env, site.id, "status = 'active', unpublished_at = NULL", []);
+  return updated ? { ok: true, site: updated } : { ok: false, error: "Site not found." };
+}
+
+/** ms since a site was deleted, or null if not deleted. */
+export function deletedAgeMs(site: Site): number | null {
+  if (site.status !== "deleted" || !site.deleted_at) return null;
+  return Date.now() - new Date(site.deleted_at).getTime();
+}
+
+// ---- quota ------------------------------------------------------------------
+
+/** The site quota for a (normalized) email: an override, else the default. -1 = unlimited. */
+export async function getAccountQuota(env: DataEnv, email: string): Promise<number> {
+  const row = await env.DB.prepare("SELECT max_sites FROM account_quotas WHERE email = ?")
+    .bind(normalizeAccountEmail(email))
+    .first<{ max_sites: number }>();
+  return row ? row.max_sites : DEFAULT_SITE_QUOTA;
+}
+
+/** Sites that occupy a quota slot for an email: active + unpublished + deleted
+ *  (suspended is the platform's; purging is being reaped). */
+export async function accountSlotSites(env: DataEnv, email: string): Promise<Site[]> {
+  const norm = normalizeAccountEmail(email);
+  const { results } = await env.DB.prepare(
+    `SELECT ${SITE_COLS} FROM sites WHERE lower(email) = ? AND status IN ('active','unpublished','deleted') ORDER BY created_at DESC`,
+  )
+    .bind(norm)
+    .all<Site>();
+  return results ?? [];
+}
+
+/** Record an over-cap claim attempt (the commercial-interest harvest). */
+export async function recordQuotaRequest(
+  env: DataEnv,
+  email: string,
+  subdomain: string,
+): Promise<void> {
+  await env.DB.prepare("INSERT INTO quota_requests (id, email, subdomain) VALUES (?, ?, ?)")
+    .bind(generateSiteId(), normalizeAccountEmail(email), subdomain.trim().toLowerCase())
+    .run()
+    .catch(() => {});
 }

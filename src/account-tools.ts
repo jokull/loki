@@ -14,6 +14,14 @@ import {
   getSiteBySubdomain,
   rotateOwnerKey,
   createSiteToken,
+  getAccountQuota,
+  accountSlotSites,
+  recordQuotaRequest,
+  deleteSite,
+  restoreSite,
+  unpublishSite,
+  republishSite,
+  RECOVERY_WINDOW_DAYS,
   type Site,
 } from "shared/data";
 
@@ -64,18 +72,26 @@ export const ACCOUNT_TOOLS: AccountTool[] = [
     inputSchema: {},
     handler: async (_args, { env, email }) => {
       const sites = await getSitesByEmail(env, email);
+      const quota = await getAccountQuota(env, email);
+      const slots = await accountSlotSites(env, email);
       return ok({
         email,
-        siteCount: sites.length,
-        sites: sites.map((s) => ({ subdomain: s.subdomain, url: siteUrl(s.subdomain), id: s.id })),
+        quota: quota === -1 ? "unlimited" : quota,
+        sitesUsed: slots.length,
+        sites: sites.map((s) => ({
+          subdomain: s.subdomain,
+          url: siteUrl(s.subdomain),
+          id: s.id,
+          status: s.status,
+        })),
         howToBuild:
-          'Pass `site: "<subdomain>"` to any build tool (site_write, preview_site, publish_site, graphql_query, …). Use claim_site to make a new one.',
+          'Pass `site: "<subdomain>"` to any build tool (site_write, preview_site, publish_site, graphql_query, …). Use claim_site to make a new one. Lifecycle: delete_site/restore_site, unpublish_site/republish_site.',
       });
     },
   },
   {
     name: "list_sites",
-    description: "List all sites in this account, newest first.",
+    description: "List all sites in this account (newest first) with their lifecycle status.",
     inputSchema: {},
     handler: async (_args, { env, email }) => {
       const sites = await getSitesByEmail(env, email);
@@ -84,6 +100,7 @@ export const ACCOUNT_TOOLS: AccountTool[] = [
           subdomain: s.subdomain,
           url: siteUrl(s.subdomain),
           id: s.id,
+          status: s.status,
           createdAt: s.created_at,
         })),
       );
@@ -102,6 +119,46 @@ export const ACCOUNT_TOOLS: AccountTool[] = [
     },
     handler: async (args, { env, email }) => {
       const subdomain = str(args.subdomain).trim().toLowerCase();
+
+      // If the name is held by THIS account's own deleted site, guide to restore/purge.
+      const held = await getSiteBySubdomain(env, subdomain);
+      if (
+        held &&
+        held.status === "deleted" &&
+        (held.email ?? "").toLowerCase() === email.toLowerCase()
+      ) {
+        return err(
+          `"${subdomain}" is your own deleted site (recoverable). restore_site({ site: "${subdomain}" }) to bring it back, or purge_site to free the name.`,
+        );
+      }
+
+      // Free-site quota (per normalized email). -1 = unlimited.
+      const quota = await getAccountQuota(env, email);
+      if (quota !== -1) {
+        const slots = await accountSlotSites(env, email);
+        if (slots.length >= quota) {
+          await recordQuotaRequest(env, email, subdomain);
+          const deleted = slots.filter((x) => x.status === "deleted");
+          const hint = deleted.length
+            ? " Free a slot now by purging a deleted site: " +
+              deleted
+                .map((x) => {
+                  const reap = x.deleted_at
+                    ? new Date(new Date(x.deleted_at).getTime() + RECOVERY_WINDOW_DAYS * 86400000)
+                        .toISOString()
+                        .slice(0, 10)
+                    : "?";
+                  return `${x.subdomain} (reaps ${reap})`;
+                })
+                .join(", ") +
+              "."
+            : "";
+          return err(
+            `You've used all ${quota} of your free {sub}.loftur.app sites.${hint} Want more? Reply to the Loftur team to raise your limit.`,
+          );
+        }
+      }
+
       const result = await createSite(env, subdomain, email);
       if (!result.ok) return err(result.error);
       const s = result.site;
@@ -154,6 +211,77 @@ export const ACCOUNT_TOOLS: AccountTool[] = [
         editorToken: token,
         role: "editor",
         mcpUrl: mcpUrl(found.site.subdomain),
+      });
+    },
+  },
+  {
+    name: "delete_site",
+    description:
+      "Delete a site: take it offline and archive it, RECOVERABLE by you for 7 days (restore_site), after which it's permanently reaped. The subdomain stays reserved to you during the window. Safe default — reversible, no confirmation needed.",
+    inputSchema: { site: z.string().describe("Subdomain or id of the site to delete.") },
+    handler: async (args, { env, email }) => {
+      const found = await resolveOwnedSite(env, email, str(args.site));
+      if ("error" in found) return err(found.error);
+      const r = await deleteSite(env, found.site);
+      if (!r.ok) return err(r.error);
+      const reap = new Date(Date.now() + RECOVERY_WINDOW_DAYS * 86400000)
+        .toISOString()
+        .slice(0, 10);
+      return ok({
+        subdomain: found.site.subdomain,
+        status: "deleted",
+        recoverableUntil: reap,
+        note: `Offline and archived. restore_site({ site: "${found.site.subdomain}" }) any time before ${reap} brings it back byte-for-byte (including end-user logins). purge_site frees the name now (allowed 24h after delete).`,
+      });
+    },
+  },
+  {
+    name: "restore_site",
+    description:
+      "Restore a deleted site within its 7-day recovery window — back to active, byte-for-byte (content, feature DB, end-user logins).",
+    inputSchema: { site: z.string().describe("Subdomain or id of the deleted site.") },
+    handler: async (args, { env, email }) => {
+      const found = await resolveOwnedSite(env, email, str(args.site));
+      if ("error" in found) return err(found.error);
+      const r = await restoreSite(env, found.site);
+      if (!r.ok) return err(r.error);
+      return ok({
+        subdomain: found.site.subdomain,
+        status: "active",
+        url: siteUrl(found.site.subdomain),
+      });
+    },
+  },
+  {
+    name: "unpublish_site",
+    description:
+      "Take a live site OFFLINE indefinitely (a pause) without deleting — data stays intact, no recovery countdown. republish_site brings it back. Use this to pause a site rather than delete it.",
+    inputSchema: { site: z.string().describe("Subdomain or id of the site to pause.") },
+    handler: async (args, { env, email }) => {
+      const found = await resolveOwnedSite(env, email, str(args.site));
+      if ("error" in found) return err(found.error);
+      const r = await unpublishSite(env, found.site);
+      if (!r.ok) return err(r.error);
+      return ok({
+        subdomain: found.site.subdomain,
+        status: "unpublished",
+        note: "Offline (visitors see a 503). Data intact. republish_site to resume.",
+      });
+    },
+  },
+  {
+    name: "republish_site",
+    description: "Resume a paused (unpublished) site — back online.",
+    inputSchema: { site: z.string().describe("Subdomain or id of the unpublished site.") },
+    handler: async (args, { env, email }) => {
+      const found = await resolveOwnedSite(env, email, str(args.site));
+      if ("error" in found) return err(found.error);
+      const r = await republishSite(env, found.site);
+      if (!r.ok) return err(r.error);
+      return ok({
+        subdomain: found.site.subdomain,
+        status: "active",
+        url: siteUrl(found.site.subdomain),
       });
     },
   },
