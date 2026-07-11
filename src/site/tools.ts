@@ -24,7 +24,7 @@ import {
 import { transpileModule, buildClientBuild } from "./transpile";
 import { BUILTIN_SPECIFIERS, parseBareImports, parseNodeBuiltinImports, resolveDep } from "./deps";
 import { buildDraftBundle } from "./serve";
-import { extractDocsFromFile, publishSite, validateDocuments } from "./publish";
+import { checkSite, extractDocsFromFile, publishSite, validateDocuments } from "./publish";
 import { getSchemaBundle } from "./schema-types";
 import { TEMPLATES, TEMPLATE_NAMES } from "./templates";
 import { runShell, resetDraft, formatShellResult } from "./shell";
@@ -574,9 +574,30 @@ export const SITE_TOOLS: SiteTool[] = [
     },
   },
   {
+    name: "site_check",
+    description:
+      "Preflight the draft WITHOUT publishing ('green means green'): runs the SAME validations publish_site gates on — transpile, GraphQL vs the live schema, loki.config.json, smoke-render '/' — plus node: import + greedy-route checks, and returns a pass/warn/fail report. If it's all green, publish + first render can't fail for a knowable reason. Run it before publish_site.",
+    inputSchema: {},
+    async handler(_args, { env, ctx, siteId }) {
+      const { ok, checks } = await checkSite(env, ctx, siteId);
+      const icon = (s: string) => (s === "pass" ? "PASS" : s === "warn" ? "WARN" : "FAIL");
+      const lines = checks.map(
+        (c) => `[${icon(c.status)}] ${c.name}${c.detail ? " — " + c.detail : ""}`,
+      );
+      const fails = checks.filter((c) => c.status === "fail").length;
+      const warns = checks.filter((c) => c.status === "warn").length;
+      const header = ok
+        ? warns > 0
+          ? `site_check: PASS with ${warns} warning(s) — safe to publish_site.`
+          : `site_check: PASS — green means green; safe to publish_site.`
+        : `site_check: FAIL (${fails}) — fix these before publish_site.`;
+      return { content: [{ type: "text", text: `${header}\n${lines.join("\n")}` }], isError: !ok };
+    },
+  },
+  {
     name: "publish_site",
     description:
-      "Validate all GraphQL documents against the live schema, extract the migration footprint, smoke-render '/', then snapshot the draft into a new immutable version and point the live site at it. Fails with precise errors at any step.",
+      "Validate all GraphQL documents against the live schema, extract the migration footprint, smoke-render '/', then snapshot the draft into a new immutable version and point the live site at it. Fails with precise errors at any step. Tip: run site_check first for a non-destructive preflight.",
     inputSchema: {
       message: z.string().optional().describe("Optional changelog message"),
     },

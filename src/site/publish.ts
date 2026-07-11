@@ -16,7 +16,7 @@ import {
 import type { Env } from "../env";
 import { cmsExecuteFor } from "../cms-dispatch";
 import { buildDraftBundle, smokeRender } from "./serve";
-import { draftDepSnapshot } from "./deps";
+import { draftDepSnapshot, parseNodeBuiltinImports } from "./deps";
 import { buildClientBuild, isTranspilable } from "./transpile";
 import {
   DEFAULT_SITE_ID,
@@ -281,6 +281,125 @@ function scanMissingAssetRefs(
         `public${ref} asset — add it with site_asset_import/site_asset_write, or ` +
         `it will 404.`,
     );
+}
+
+export interface SiteCheckItem {
+  name: string;
+  status: "pass" | "warn" | "fail";
+  detail?: string;
+}
+
+/**
+ * Non-destructive preflight — "green means green". Runs the SAME validations
+ * publish_site gates on (transpile, GraphQL-vs-live-schema, loki.config.json,
+ * smoke-render "/") PLUS node: import + greedy-route checks, over the current
+ * draft, WITHOUT snapshotting. If every check passes, publish + first render
+ * can't fail for a knowable reason.
+ */
+export async function checkSite(
+  env: Env,
+  ctx: ExecutionContext,
+  siteId: string,
+): Promise<{ ok: boolean; checks: SiteCheckItem[] }> {
+  const checks: SiteCheckItem[] = [];
+  const files = await listFiles(env, siteId);
+
+  const broken = files.filter((f) => isTranspilable(f.path) && f.compiled === null);
+  checks.push(
+    broken.length
+      ? {
+          name: "transpile",
+          status: "fail",
+          detail: `failed to transpile: ${broken.map((f) => f.path).join(", ")}`,
+        }
+      : { name: "transpile", status: "pass" },
+  );
+
+  const nodeHits: string[] = [];
+  for (const f of files) {
+    if (!isTranspilable(f.path)) continue;
+    const n = parseNodeBuiltinImports(f.source);
+    if (n.length) nodeHits.push(`${f.path}: ${n.join(", ")}`);
+  }
+  checks.push(
+    nodeHits.length
+      ? {
+          name: "node-imports",
+          status: "fail",
+          detail: `Node builtins can't load in the site isolate — ${nodeHits.join("; ")}`,
+        }
+      : { name: "node-imports", status: "pass" },
+  );
+
+  let schema: GraphQLSchema | null = null;
+  try {
+    schema = await introspectSchema(env, siteId);
+  } catch (err) {
+    checks.push({
+      name: "graphql",
+      status: "fail",
+      detail: `schema introspection failed: ${err instanceof Error ? err.message : String(err)}`,
+    });
+  }
+  if (schema) {
+    const docs = await extractDocuments(env, siteId);
+    const problems = validateDocuments(schema, docs);
+    checks.push(
+      problems.length
+        ? {
+            name: "graphql",
+            status: "fail",
+            detail: problems.map((p) => `${p.source}: ${p.errors.join("; ")}`).join(" | "),
+          }
+        : { name: "graphql", status: "pass" },
+    );
+  }
+
+  const config = await validateSiteConfig(env, siteId);
+  checks.push(
+    config.ok
+      ? { name: "config", status: "pass" }
+      : { name: "config", status: "fail", detail: config.error },
+  );
+
+  const bundle = await buildDraftBundle(env, siteId);
+  if (Object.keys(bundle).length === 0) {
+    checks.push({
+      name: "smoke-render",
+      status: "fail",
+      detail: "draft is empty — nothing to render",
+    });
+  } else {
+    try {
+      const res = await smokeRender(env, ctx, siteId, bundle);
+      checks.push(
+        res.status >= 500
+          ? { name: "smoke-render", status: "fail", detail: `GET / -> ${res.status}` }
+          : { name: "smoke-render", status: "pass", detail: `GET / -> ${res.status}` },
+      );
+    } catch (err) {
+      checks.push({
+        name: "smoke-render",
+        status: "fail",
+        detail: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  const greedy = files
+    .map((f) => f.path)
+    .filter((p) => /^routes\/\[[^/\]]+\](\.[tj]sx?$|\/)/.test(p));
+  checks.push(
+    greedy.length
+      ? {
+          name: "routes",
+          status: "warn",
+          detail: `top-level dynamic route(s) ${greedy.join(", ")} match ANY single-segment path — unknown paths become 200 soft-404s. Constrain the param or handle not-found.`,
+        }
+      : { name: "routes", status: "pass" },
+  );
+
+  return { ok: !checks.some((c) => c.status === "fail"), checks };
 }
 
 export async function publishSite(

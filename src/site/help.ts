@@ -1001,8 +1001,11 @@ Worked example — recolor an accent, preview, publish:
 1. site_write("routes/index.tsx", "...")   (file contents go in \`source\`; \`content\`
    is accepted as an alias. transpiled + gql validated; errors returned)
 2. preview_site()                          -> open the returned URL to see the DRAFT
-3. publish_site("message")                 -> validates + smoke-renders + snapshots
-4. rollback_site(versionId) / site_versions() as needed
+3. site_check()                            -> non-destructive preflight ("green means
+   green"): transpile + gql-vs-live-schema + config + smoke-render + node:/route
+   checks. If it PASSES, publish won't fail for a knowable reason.
+4. publish_site("message")                 -> validates + smoke-renders + snapshots
+5. rollback_site(versionId) / site_versions() as needed
 
 ## Previewing without a browser
 
