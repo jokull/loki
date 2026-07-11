@@ -13,6 +13,7 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
 import type { Env } from "./env";
 import { DEFAULT_SITE_ID } from "./site/store";
+import { logLine } from "./logs";
 
 const FROM_ADDRESS = "noreply@loftur.app";
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -54,9 +55,13 @@ export class MailEntrypoint extends WorkerEntrypoint<Env, { siteId?: string }> {
         // reply-to isn't in the minimal typed surface; pass through if supported.
         ...(input.replyTo ? { replyTo: input.replyTo } : {}),
       } as any);
+      this.ctx.waitUntil(
+        logLine(this.env, siteId, "info", "mail", `sent to ${to} — "${input.subject}"`),
+      );
       return { ok: true, id: res?.messageId };
     } catch (err) {
       console.error(`[mail ${siteId}] send failed:`, err);
+      this.ctx.waitUntil(logLine(this.env, siteId, "error", "mail", `send to ${to} FAILED`));
       return { ok: false, error: "Send failed." };
     }
   }

@@ -16,6 +16,7 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
 import type { Env } from "./env";
 import { DEFAULT_SITE_ID } from "./site/store";
+import { logLine } from "./logs";
 
 export class OutboundEntrypoint extends WorkerEntrypoint<
   Env,
@@ -39,6 +40,15 @@ export class OutboundEntrypoint extends WorkerEntrypoint<
       const okHost = allowed.some((h) => hostname === h || hostname.endsWith("." + h));
       if (!okHost) {
         console.log(`[outbound ${siteId}] BLOCKED ${host} (not in allowedHosts)`);
+        this.ctx.waitUntil(
+          logLine(
+            this.env,
+            siteId,
+            "warn",
+            "outbound",
+            `BLOCKED ${request.method} ${host} — not in loki.config.json allowedHosts`,
+          ),
+        );
         return new Response(
           `Outbound request to "${host}" blocked: not in loki.config.json allowedHosts.`,
           { status: 403, headers: { "content-type": "text/plain; charset=utf-8" } },
@@ -50,15 +60,23 @@ export class OutboundEntrypoint extends WorkerEntrypoint<
       // Real global fetch runs in the SUPERVISOR (this entrypoint), which has
       // network access — the isolate itself never touches the network directly.
       const res = await fetch(request);
-      console.log(
-        `[outbound ${siteId}] ${request.method} ${host} -> ${res.status} ` +
-          `(${Date.now() - started}ms)`,
+      const ms = Date.now() - started;
+      console.log(`[outbound ${siteId}] ${request.method} ${host} -> ${res.status} (${ms}ms)`);
+      this.ctx.waitUntil(
+        logLine(
+          this.env,
+          siteId,
+          res.ok ? "info" : "warn",
+          "outbound",
+          `${request.method} ${host} -> ${res.status} (${ms}ms)`,
+        ),
       );
       return res;
     } catch (err) {
-      console.log(
-        `[outbound ${siteId}] ${request.method} ${host} -> ERROR ` +
-          `${err instanceof Error ? err.message : String(err)}`,
+      const msg = err instanceof Error ? err.message : String(err);
+      console.log(`[outbound ${siteId}] ${request.method} ${host} -> ERROR ${msg}`);
+      this.ctx.waitUntil(
+        logLine(this.env, siteId, "error", "outbound", `${request.method} ${host} -> ERROR ${msg}`),
       );
       throw err;
     }

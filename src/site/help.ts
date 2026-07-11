@@ -304,8 +304,9 @@ your server code reads them:
 
 Your server code CAN call external HTTP(S) APIs with the normal \`fetch()\` — from a
 serverFn handler or a route loader/action. Every outbound request is proxied and
-logged by the platform (a seam for future per-site allowlists / rate limits); no
-config needed to start. Combine with \`env.SECRETS\`:
+logged to \`site_logs\` (host, method, status, ms — blocked hosts too), so you can
+audit egress with the \`site_logs\` tool; \`env.MAIL\` sends are logged there as well.
+No config needed to start. Combine with \`env.SECRETS\`:
 
     export const charge = serverFn({ method: "POST" })
       .validator((i: any) => ({ amount: Number(i?.amount) | 0 }))
