@@ -12,8 +12,8 @@ importers:
         specifier: ^1.28.0
         version: 1.28.0(@cfworker/json-schema@4.1.1)(zod@3.25.76)
       agent-cms:
-        specifier: ^0.4.4
-        version: 0.4.4(@babel/core@7.29.7)(@babel/runtime@7.29.7)(@cloudflare/workers-types@4.20260702.1)(@effect/cluster@0.58.2(@effect/platform@0.96.2(effect@3.21.4))(@effect/rpc@0.75.1(@effect/platform@0.96.2(effect@3.21.4))(effect@3.21.4))(@effect/sql@0.51.1(@effect/experimental@0.60.0(@effect/platform@0.96.2(effect@3.21.4))(effect@3.21.4))(@effect/platform@0.96.2(effect@3.21.4))(effect@3.21.4))(@effect/workflow@0.18.2(@effect/experimental@0.60.0(@effect/platform@0.96.2(effect@3.21.4))(effect@3.21.4))(@effect/platform@0.96.2(effect@3.21.4))(@effect/rpc@0.75.1(@effect/platform@0.96.2(effect@3.21.4))(effect@3.21.4))(effect@3.21.4))(effect@3.21.4))(@modelcontextprotocol/sdk@1.28.0(@cfworker/json-schema@4.1.1)(zod@3.25.76))(ai@6.0.220(zod@3.25.76))(react@19.2.7)(rolldown@1.1.4)(vite@8.1.4(esbuild@0.25.12)(jiti@2.7.0)(yaml@2.9.0))(zod@3.25.76)
+        specifier: ^0.4.5
+        version: 0.4.5(@babel/core@7.29.7)(@babel/runtime@7.29.7)(@cloudflare/workers-types@4.20260702.1)(@effect/cluster@0.58.2(@effect/platform@0.96.2(effect@3.21.4))(@effect/rpc@0.75.1(@effect/platform@0.96.2(effect@3.21.4))(effect@3.21.4))(@effect/sql@0.51.1(@effect/experimental@0.60.0(@effect/platform@0.96.2(effect@3.21.4))(effect@3.21.4))(@effect/platform@0.96.2(effect@3.21.4))(effect@3.21.4))(@effect/workflow@0.18.2(@effect/experimental@0.60.0(@effect/platform@0.96.2(effect@3.21.4))(effect@3.21.4))(@effect/platform@0.96.2(effect@3.21.4))(@effect/rpc@0.75.1(@effect/platform@0.96.2(effect@3.21.4))(effect@3.21.4))(effect@3.21.4))(effect@3.21.4))(@modelcontextprotocol/sdk@1.28.0(@cfworker/json-schema@4.1.1)(zod@3.25.76))(ai@6.0.220(zod@3.25.76))(react@19.2.7)(rolldown@1.1.4)(vite@8.1.4(esbuild@0.25.12)(jiti@2.7.0)(yaml@2.9.0))(zod@3.25.76)
       agents:
         specifier: ^0.8.6
         version: 0.8.7(@babel/core@7.29.7)(@babel/runtime@7.29.7)(@cloudflare/codemode@0.3.8(@modelcontextprotocol/sdk@1.28.0(@cfworker/json-schema@4.1.1)(zod@3.25.76))(ai@6.0.220(zod@3.25.76))(zod@3.25.76))(@cloudflare/workers-types@4.20260702.1)(ai@6.0.220(zod@3.25.76))(react@19.2.7)(rolldown@1.1.4)(vite@8.1.4(esbuild@0.25.12)(jiti@2.7.0)(yaml@2.9.0))(zod@3.25.76)
@@ -2420,8 +2420,8 @@ packages:
     engines: {node: '>=0.4.0'}
     hasBin: true
 
-  agent-cms@0.4.4:
-    resolution: {integrity: sha512-GrFp96v9CMuSvYdBeay2YXcDhAGCnQ9QrquxDsPwvoeAORqPaav9Wen2WT4s4l0k7OUgo6Z1IDO1q/7DJQosQg==}
+  agent-cms@0.4.5:
+    resolution: {integrity: sha512-KoC9xQAsmhX+/jETi9bTTYfoDnWy5OI6KsOrwc1AjX2gDW1xb0dLgRtk3jNJdnGjpkYsQHfd84TxuQYAGtuOUA==}
 
   agents@0.8.7:
     resolution: {integrity: sha512-z/GZJ7cFx3IP7OKsJnAs84pKMXOFnFKtMhiBcTxsmRhiCyttsPGCE0SrUPbXxX5kyV9pOCj+4eEfTjH2+u3W0w==}
@@ -6166,7 +6166,7 @@ snapshots:
 
   acorn@8.17.0: {}
 
-  agent-cms@0.4.4(@babel/core@7.29.7)(@babel/runtime@7.29.7)(@cloudflare/workers-types@4.20260702.1)(@effect/cluster@0.58.2(@effect/platform@0.96.2(effect@3.21.4))(@effect/rpc@0.75.1(@effect/platform@0.96.2(effect@3.21.4))(effect@3.21.4))(@effect/sql@0.51.1(@effect/experimental@0.60.0(@effect/platform@0.96.2(effect@3.21.4))(effect@3.21.4))(@effect/platform@0.96.2(effect@3.21.4))(effect@3.21.4))(@effect/workflow@0.18.2(@effect/experimental@0.60.0(@effect/platform@0.96.2(effect@3.21.4))(effect@3.21.4))(@effect/platform@0.96.2(effect@3.21.4))(@effect/rpc@0.75.1(@effect/platform@0.96.2(effect@3.21.4))(effect@3.21.4))(effect@3.21.4))(effect@3.21.4))(@modelcontextprotocol/sdk@1.28.0(@cfworker/json-schema@4.1.1)(zod@3.25.76))(ai@6.0.220(zod@3.25.76))(react@19.2.7)(rolldown@1.1.4)(vite@8.1.4(esbuild@0.25.12)(jiti@2.7.0)(yaml@2.9.0))(zod@3.25.76):
+  agent-cms@0.4.5(@babel/core@7.29.7)(@babel/runtime@7.29.7)(@cloudflare/workers-types@4.20260702.1)(@effect/cluster@0.58.2(@effect/platform@0.96.2(effect@3.21.4))(@effect/rpc@0.75.1(@effect/platform@0.96.2(effect@3.21.4))(effect@3.21.4))(@effect/sql@0.51.1(@effect/experimental@0.60.0(@effect/platform@0.96.2(effect@3.21.4))(effect@3.21.4))(@effect/platform@0.96.2(effect@3.21.4))(effect@3.21.4))(@effect/workflow@0.18.2(@effect/experimental@0.60.0(@effect/platform@0.96.2(effect@3.21.4))(effect@3.21.4))(@effect/platform@0.96.2(effect@3.21.4))(@effect/rpc@0.75.1(@effect/platform@0.96.2(effect@3.21.4))(effect@3.21.4))(effect@3.21.4))(effect@3.21.4))(@modelcontextprotocol/sdk@1.28.0(@cfworker/json-schema@4.1.1)(zod@3.25.76))(ai@6.0.220(zod@3.25.76))(react@19.2.7)(rolldown@1.1.4)(vite@8.1.4(esbuild@0.25.12)(jiti@2.7.0)(yaml@2.9.0))(zod@3.25.76):
     dependencies:
       '@aws-sdk/client-s3': 3.1080.0
       '@aws-sdk/s3-request-presigner': 3.1080.0
