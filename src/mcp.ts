@@ -52,6 +52,13 @@ function editorAllows(name: string): boolean {
   return EDITOR_SITE_TOOLS.has(name) || EDITOR_CMS_TOOLS.has(name);
 }
 
+/**
+ * Tools that don't operate on a specific site — the global authoring guide. In
+ * the account MCP these must NOT require the `site` selector, so an agent can
+ * read the guide during orientation before it has claimed a site.
+ */
+const SITE_AGNOSTIC_TOOLS = new Set(["site_help"]);
+
 /** Extract the bearer token from an Authorization header (Bearer or bare). */
 function bearerToken(request: Request): string | null {
   const header = request.headers.get("authorization");
@@ -251,7 +258,12 @@ function buildAccountServer(env: Env, ctx: ExecutionContext, email: string): Ser
     const siteDefs = SITE_TOOLS.map((t) => ({
       name: t.name,
       description: t.description,
-      inputSchema: withSiteParam(shapeToJsonSchema(t.inputSchema)) as any,
+      // Site-agnostic tools (site_help is a global authoring guide) must be
+      // callable during orientation, BEFORE any site is claimed — so they don't
+      // get the required `site` selector.
+      inputSchema: (SITE_AGNOSTIC_TOOLS.has(t.name)
+        ? shapeToJsonSchema(t.inputSchema)
+        : withSiteParam(shapeToJsonSchema(t.inputSchema))) as any,
     }));
     let cmsTools: any[] = [];
     try {
@@ -275,6 +287,13 @@ function buildAccountServer(env: Env, ctx: ExecutionContext, email: string): Ser
       const parsed = z.object(accountTool.inputSchema).safeParse(args);
       if (!parsed.success) return invalidArgs(name, parsed.error);
       return accountTool.handler(parsed.data as Record<string, unknown>, { env, email });
+    }
+
+    // Site-agnostic tools (site_help) don't need a claimed site — dispatch against
+    // the default site (they ignore siteId) so orientation works pre-claim.
+    if (SITE_AGNOSTIC_TOOLS.has(name)) {
+      const { site: _drop, ...rest } = args;
+      return dispatchSiteCall(env, ctx, DEFAULT_SITE_ID, name, rest);
     }
 
     // A build/content tool: resolve + ownership-check the target site, then strip

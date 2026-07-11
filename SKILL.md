@@ -51,16 +51,18 @@ claude mcp add loftur --transport http https://loftur.app/mcp \
 
 Everything below happens over that ONE connection.
 
-1. **`whoami`** — the account email + every site you already own, and how to
+1. **`site_help`** — the full authoring guide (route module shape, serverFns, the
+   `env` capabilities, the feature database, auth, assets, GraphQL, islands,
+   worked examples). It's global (no `site` needed) — read it any time; it's the
+   source of truth.
+2. **`whoami`** — the account email + every site you already own, and how to
    address them (each build tool takes a `site` argument).
-2. **`claim_site({ subdomain })`** — provision a brand-new
+3. **`claim_site({ subdomain })`** — provision a brand-new
    `{subdomain}.loftur.app` (e.g. `claim_site({ subdomain: "hermes" })`). It comes
    back live with its backend wired up. Build it immediately — no reconnect.
-3. **`site_help`** — the full authoring guide (route module shape, serverFns, the
-   `env` capabilities, the feature database, auth, assets, GraphQL, islands,
-   worked examples). Read it before writing code; it's the source of truth.
-4. **`schema_types`** — TypeScript types generated from that site's LIVE CMS
-   schema. You have no IDE hover, so this is how you learn exact field names.
+4. **`schema_types({ site })`** — TypeScript types generated from THAT site's LIVE
+   CMS schema (per-site, so it needs a claimed `site`). You have no IDE hover, so
+   this is how you learn exact field names.
 
 Other account tools: `list_sites`, `rotate_site_key({ site })` (regenerate an
 owner key), `mint_editor_token({ site, label })` (hand a content editor a
