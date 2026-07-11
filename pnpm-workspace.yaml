@@ -11,4 +11,4 @@ allowBuilds:
   sharp: false
   workerd: true
 minimumReleaseAgeExclude:
-  - agent-cms@0.4.1 || 0.4.2 || 0.4.3
+  - agent-cms@0.4.1 || 0.4.2 || 0.4.3 || 0.4.4
