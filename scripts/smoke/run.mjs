@@ -14,6 +14,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const SUITES = [
   ["auth  (secrets · outbound · magic-link · user injection · logout)", "auth.mjs"],
   ["account (PAT → unified MCP · claim subdomain + build)", "account.mjs"],
+  ["feedback (strict input validation · fresh tenant schema cache)", "feedback.mjs"],
   ["web   (account sign-in · dashboard · sites · gating)", "web.mjs"],
   // mail sends a real email — only with MAIL=1
   ...(process.env.MAIL ? [["mail  (env.MAIL transactional email)", "mail.mjs"]] : []),

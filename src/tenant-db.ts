@@ -230,6 +230,25 @@ export class TenantDB extends DurableObject<Env> {
       .toArray()
       .map((r: any) => r.name as string);
   }
+
+  /**
+   * This tenant's agent-cms schema-version counter (`_cms_meta.schema_version`),
+   * read from THIS DO's SQLite. The supervisor's schema cache polls this to know
+   * when a create_field/create_model here invalidated the introspected schema —
+   * reading the supervisor's own D1 counter would never reflect a tenant edit.
+   * Returns 0 on any error (never blocks a write or tool call).
+   */
+  async schemaVersion(): Promise<number> {
+    try {
+      const rows = this.sqlStore
+        .exec(`SELECT "value" AS value FROM "_cms_meta" WHERE "key" = 'schema_version'`)
+        .toArray();
+      const n = Number((rows[0] as any)?.value ?? 0);
+      return Number.isFinite(n) ? n : 0;
+    } catch {
+      return 0;
+    }
+  }
 }
 
 // ---- TenantFeatureDB: the tenant's own app-data database ---------------------

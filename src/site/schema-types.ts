@@ -36,6 +36,7 @@ import {
 } from "graphql";
 import type { Env } from "../env";
 import { cmsExecuteFor } from "../cms-dispatch";
+import { DEFAULT_SITE_ID } from "./store";
 
 // ---- scalar mapping ---------------------------------------------------------
 
@@ -208,9 +209,19 @@ export function generateSchemaTypes(schema: GraphQLSchema, version: number): str
 
 // ---- introspection + versioned per-isolate cache ----------------------------
 
-/** Read agent-cms's shared schema-version counter directly from D1. */
-async function readSchemaVersion(env: Env): Promise<number> {
+/**
+ * Read agent-cms's schema-version counter for THIS site. The default site's CMS
+ * runs over the supervisor's D1 (`env.DB`); a tenant site's CMS runs inside its
+ * own TenantDB DO, so its counter must be read from that DO — reading `env.DB`
+ * here would pin every tenant to a version that never changes (the bug that made
+ * site_write/schema_types serve a stale schema for the isolate's life while
+ * graphql_query + publish_site saw fresh fields).
+ */
+async function readSchemaVersion(env: Env, siteId: string): Promise<number> {
   try {
+    if (siteId !== DEFAULT_SITE_ID) {
+      return await env.TENANT_DB.get(env.TENANT_DB.idFromName(siteId)).schemaVersion();
+    }
     const row = await env.DB.prepare(
       `SELECT "value" AS value FROM "_cms_meta" WHERE "key" = 'schema_version'`,
     ).first<{ value: number | string }>();
@@ -263,7 +274,7 @@ export async function getSchemaBundle(
   if (cached && now - cached.checkedAt < VERSION_TTL_MS) {
     return cached;
   }
-  const version = await readSchemaVersion(env);
+  const version = await readSchemaVersion(env, siteId);
   if (cached && cached.version === version) {
     cached.checkedAt = now;
     return cached;

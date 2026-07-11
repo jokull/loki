@@ -12,8 +12,8 @@ importers:
         specifier: ^1.28.0
         version: 1.28.0(@cfworker/json-schema@4.1.1)(zod@3.25.76)
       agent-cms:
-        specifier: ^0.4.2
-        version: 0.4.2(@babel/core@7.29.7)(@babel/runtime@7.29.7)(@cloudflare/workers-types@4.20260702.1)(@effect/cluster@0.58.2(@effect/platform@0.96.2(effect@3.21.4))(@effect/rpc@0.75.1(@effect/platform@0.96.2(effect@3.21.4))(effect@3.21.4))(@effect/sql@0.51.1(@effect/experimental@0.60.0(@effect/platform@0.96.2(effect@3.21.4))(effect@3.21.4))(@effect/platform@0.96.2(effect@3.21.4))(effect@3.21.4))(@effect/workflow@0.18.2(@effect/experimental@0.60.0(@effect/platform@0.96.2(effect@3.21.4))(effect@3.21.4))(@effect/platform@0.96.2(effect@3.21.4))(@effect/rpc@0.75.1(@effect/platform@0.96.2(effect@3.21.4))(effect@3.21.4))(effect@3.21.4))(effect@3.21.4))(@modelcontextprotocol/sdk@1.28.0(@cfworker/json-schema@4.1.1)(zod@3.25.76))(ai@6.0.220(zod@3.25.76))(react@19.2.7)(rolldown@1.1.4)(vite@8.1.4(esbuild@0.25.12)(jiti@2.7.0)(yaml@2.9.0))(zod@3.25.76)
+        specifier: ^0.4.3
+        version: 0.4.3(@babel/core@7.29.7)(@babel/runtime@7.29.7)(@cloudflare/workers-types@4.20260702.1)(@effect/cluster@0.58.2(@effect/platform@0.96.2(effect@3.21.4))(@effect/rpc@0.75.1(@effect/platform@0.96.2(effect@3.21.4))(effect@3.21.4))(@effect/sql@0.51.1(@effect/experimental@0.60.0(@effect/platform@0.96.2(effect@3.21.4))(effect@3.21.4))(@effect/platform@0.96.2(effect@3.21.4))(effect@3.21.4))(@effect/workflow@0.18.2(@effect/experimental@0.60.0(@effect/platform@0.96.2(effect@3.21.4))(effect@3.21.4))(@effect/platform@0.96.2(effect@3.21.4))(@effect/rpc@0.75.1(@effect/platform@0.96.2(effect@3.21.4))(effect@3.21.4))(effect@3.21.4))(effect@3.21.4))(@modelcontextprotocol/sdk@1.28.0(@cfworker/json-schema@4.1.1)(zod@3.25.76))(ai@6.0.220(zod@3.25.76))(react@19.2.7)(rolldown@1.1.4)(vite@8.1.4(esbuild@0.25.12)(jiti@2.7.0)(yaml@2.9.0))(zod@3.25.76)
       agents:
         specifier: ^0.8.6
         version: 0.8.7(@babel/core@7.29.7)(@babel/runtime@7.29.7)(@cloudflare/codemode@0.3.8(@modelcontextprotocol/sdk@1.28.0(@cfworker/json-schema@4.1.1)(zod@3.25.76))(ai@6.0.220(zod@3.25.76))(zod@3.25.76))(@cloudflare/workers-types@4.20260702.1)(ai@6.0.220(zod@3.25.76))(react@19.2.7)(rolldown@1.1.4)(vite@8.1.4(esbuild@0.25.12)(jiti@2.7.0)(yaml@2.9.0))(zod@3.25.76)
@@ -104,7 +104,7 @@ importers:
     devDependencies:
       '@cloudflare/vite-plugin':
         specifier: latest
-        version: 1.43.3(vite@8.1.4(esbuild@0.28.1)(jiti@2.7.0)(yaml@2.9.0))(workerd@1.20260708.1)(wrangler@4.109.0(@cloudflare/workers-types@4.20260702.1))
+        version: 1.44.0(vite@8.1.4(esbuild@0.28.1)(jiti@2.7.0)(yaml@2.9.0))(workerd@1.20260708.1)(wrangler@4.110.0(@cloudflare/workers-types@4.20260702.1))
       '@types/react':
         specifier: latest
         version: 19.2.17
@@ -122,7 +122,7 @@ importers:
         version: 8.1.4(esbuild@0.28.1)(jiti@2.7.0)(yaml@2.9.0)
       wrangler:
         specifier: latest
-        version: 4.109.0(@cloudflare/workers-types@4.20260702.1)
+        version: 4.110.0(@cloudflare/workers-types@4.20260702.1)
 
 packages:
 
@@ -411,12 +411,12 @@ packages:
       workerd:
         optional: true
 
-  '@cloudflare/vite-plugin@1.43.3':
-    resolution: {integrity: sha512-45p5sNmi5ty75GyxavyaEIJXaAljEwiOHAfbEyoNbKP7Aq7QF3UNohwZxD3BnIV5o08w1uzKbVHxucqJKOV4gA==}
+  '@cloudflare/vite-plugin@1.44.0':
+    resolution: {integrity: sha512-8wGGunqRcs34o4GRq0Rurp7GZg30xtLJeRGUU81a49r9zQRjlp3xIlsWr3nFlSCso4eE3cjZfiKC/2y116M4TQ==}
     hasBin: true
     peerDependencies:
       vite: ^6.1.0 || ^7.0.0 || ^8.0.0
-      wrangler: ^4.109.0
+      wrangler: ^4.110.0
 
   '@cloudflare/workerd-darwin-64@1.20260701.1':
     resolution: {integrity: sha512-Zd9Y1bah6DwwBN2RW8vJohffQrIUazb8UXnqSNecOxM+jJLhUuvv5IOG8dbHcV83TyZAubea6gsQXo2yH1lDdw==}
@@ -2420,8 +2420,8 @@ packages:
     engines: {node: '>=0.4.0'}
     hasBin: true
 
-  agent-cms@0.4.2:
-    resolution: {integrity: sha512-Y1pazm83h/bRX2i+5xeXPDU4NJ4DjJanyFVnSjQD9e8q8Jnq8B73lAuueAdCUgU6UfZ0Oh8cJQKg8yx055PqQA==}
+  agent-cms@0.4.3:
+    resolution: {integrity: sha512-o8NEXIgxCaXkeDFMFd2iQxtjbDhu3E4TcsFRXGyMqOFS9ebbMcIoEEe95AgrEaDBXA6IdfQehdl8AWOOgZLOhg==}
 
   agents@0.8.7:
     resolution: {integrity: sha512-z/GZJ7cFx3IP7OKsJnAs84pKMXOFnFKtMhiBcTxsmRhiCyttsPGCE0SrUPbXxX5kyV9pOCj+4eEfTjH2+u3W0w==}
@@ -3320,8 +3320,8 @@ packages:
     engines: {node: '>=22.0.0'}
     hasBin: true
 
-  miniflare@4.20260708.0:
-    resolution: {integrity: sha512-ut32kKKTyZIoXhbtteDAMOwTVx9aCeehMeKb1xmJs4RLdBrF5flSZD1MOpWqmJycIV7YBHjcaZcVHLMr/g5RZA==}
+  miniflare@4.20260708.1:
+    resolution: {integrity: sha512-c94O9zRDISdqO18EHt6l0iF/fWgWt8p18PJvRsA/L/NJZ9Cfke3s/F5Blg1XXF7WDutVRzWVWy8Vy4LaT5ifsA==}
     engines: {node: '>=22.0.0'}
     hasBin: true
 
@@ -4102,8 +4102,8 @@ packages:
       '@cloudflare/workers-types':
         optional: true
 
-  wrangler@4.109.0:
-    resolution: {integrity: sha512-Ev6iIBNnRwvYeJv8B7377YsnY+PxEznHmz3r33cWgP+6A5HNqqqJhChBaVUWxxs0uQPKuYBy8tqrfyd7o8WmBg==}
+  wrangler@4.110.0:
+    resolution: {integrity: sha512-xZeXKYi7hxQRF5anL+v77RkufJNpF9f3Eqeyqq2QBsETpLZgh0Agj0jJ6JPtkbgn6ukZdh8OK5egsGPWIditgg==}
     engines: {node: '>=22.0.0'}
     hasBin: true
     peerDependencies:
@@ -4603,13 +4603,13 @@ snapshots:
     optionalDependencies:
       workerd: 1.20260708.1
 
-  '@cloudflare/vite-plugin@1.43.3(vite@8.1.4(esbuild@0.28.1)(jiti@2.7.0)(yaml@2.9.0))(workerd@1.20260708.1)(wrangler@4.109.0(@cloudflare/workers-types@4.20260702.1))':
+  '@cloudflare/vite-plugin@1.44.0(vite@8.1.4(esbuild@0.28.1)(jiti@2.7.0)(yaml@2.9.0))(workerd@1.20260708.1)(wrangler@4.110.0(@cloudflare/workers-types@4.20260702.1))':
     dependencies:
       '@cloudflare/unenv-preset': 2.16.1(unenv@2.0.0-rc.24)(workerd@1.20260708.1)
-      miniflare: 4.20260708.0
+      miniflare: 4.20260708.1
       unenv: 2.0.0-rc.24
       vite: 8.1.4(esbuild@0.28.1)(jiti@2.7.0)(yaml@2.9.0)
-      wrangler: 4.109.0(@cloudflare/workers-types@4.20260702.1)
+      wrangler: 4.110.0(@cloudflare/workers-types@4.20260702.1)
       ws: 8.21.0
     transitivePeerDependencies:
       - bufferutil
@@ -6166,7 +6166,7 @@ snapshots:
 
   acorn@8.17.0: {}
 
-  agent-cms@0.4.2(@babel/core@7.29.7)(@babel/runtime@7.29.7)(@cloudflare/workers-types@4.20260702.1)(@effect/cluster@0.58.2(@effect/platform@0.96.2(effect@3.21.4))(@effect/rpc@0.75.1(@effect/platform@0.96.2(effect@3.21.4))(effect@3.21.4))(@effect/sql@0.51.1(@effect/experimental@0.60.0(@effect/platform@0.96.2(effect@3.21.4))(effect@3.21.4))(@effect/platform@0.96.2(effect@3.21.4))(effect@3.21.4))(@effect/workflow@0.18.2(@effect/experimental@0.60.0(@effect/platform@0.96.2(effect@3.21.4))(effect@3.21.4))(@effect/platform@0.96.2(effect@3.21.4))(@effect/rpc@0.75.1(@effect/platform@0.96.2(effect@3.21.4))(effect@3.21.4))(effect@3.21.4))(effect@3.21.4))(@modelcontextprotocol/sdk@1.28.0(@cfworker/json-schema@4.1.1)(zod@3.25.76))(ai@6.0.220(zod@3.25.76))(react@19.2.7)(rolldown@1.1.4)(vite@8.1.4(esbuild@0.25.12)(jiti@2.7.0)(yaml@2.9.0))(zod@3.25.76):
+  agent-cms@0.4.3(@babel/core@7.29.7)(@babel/runtime@7.29.7)(@cloudflare/workers-types@4.20260702.1)(@effect/cluster@0.58.2(@effect/platform@0.96.2(effect@3.21.4))(@effect/rpc@0.75.1(@effect/platform@0.96.2(effect@3.21.4))(effect@3.21.4))(@effect/sql@0.51.1(@effect/experimental@0.60.0(@effect/platform@0.96.2(effect@3.21.4))(effect@3.21.4))(@effect/platform@0.96.2(effect@3.21.4))(effect@3.21.4))(@effect/workflow@0.18.2(@effect/experimental@0.60.0(@effect/platform@0.96.2(effect@3.21.4))(effect@3.21.4))(@effect/platform@0.96.2(effect@3.21.4))(@effect/rpc@0.75.1(@effect/platform@0.96.2(effect@3.21.4))(effect@3.21.4))(effect@3.21.4))(effect@3.21.4))(@modelcontextprotocol/sdk@1.28.0(@cfworker/json-schema@4.1.1)(zod@3.25.76))(ai@6.0.220(zod@3.25.76))(react@19.2.7)(rolldown@1.1.4)(vite@8.1.4(esbuild@0.25.12)(jiti@2.7.0)(yaml@2.9.0))(zod@3.25.76):
     dependencies:
       '@aws-sdk/client-s3': 3.1080.0
       '@aws-sdk/s3-request-presigner': 3.1080.0
@@ -7285,7 +7285,7 @@ snapshots:
       - bufferutil
       - utf-8-validate
 
-  miniflare@4.20260708.0:
+  miniflare@4.20260708.1:
     dependencies:
       '@cspotcode/source-map-support': 0.8.1
       sharp: 0.34.5
@@ -8181,13 +8181,13 @@ snapshots:
       - bufferutil
       - utf-8-validate
 
-  wrangler@4.109.0(@cloudflare/workers-types@4.20260702.1):
+  wrangler@4.110.0(@cloudflare/workers-types@4.20260702.1):
     dependencies:
       '@cloudflare/kv-asset-handler': 0.5.0
       '@cloudflare/unenv-preset': 2.16.1(unenv@2.0.0-rc.24)(workerd@1.20260708.1)
       blake3-wasm: 2.1.5
       esbuild: 0.28.1
-      miniflare: 4.20260708.0
+      miniflare: 4.20260708.1
       path-to-regexp: 6.3.0
       unenv: 2.0.0-rc.24
       workerd: 1.20260708.1
