@@ -11,6 +11,7 @@ import { buildAccountMagicLink } from "shared/account";
 import { createAccountToken } from "shared/data";
 import { DEFAULT_SITE_ID } from "./site/store";
 import { cmsExecuteFor } from "./cms-dispatch";
+import { runReaper } from "./lifecycle";
 import SKILL_MD from "../SKILL.md";
 
 /** The Loftur apex zone. Subdomains of it are tenant sites. */
@@ -394,7 +395,19 @@ export default {
     }
   },
 
-  async scheduled(_controller: ScheduledController, env: Env): Promise<void> {
+  async scheduled(
+    _controller: ScheduledController,
+    env: Env,
+    ctx: ExecutionContext,
+  ): Promise<void> {
+    // agent-cms scheduled content transitions (existing).
     await getCms(env).runScheduledTransitions();
+    // Site-lifecycle reaper: hard-purge `deleted` sites past the 7-day window +
+    // resume any half-finished purge tombstone. Runs daily (wrangler cron).
+    ctx.waitUntil(
+      runReaper(env)
+        .then((n) => n > 0 && console.log(`[reaper] purged ${n} site(s)`))
+        .catch((e) => console.error("[reaper]", e)),
+    );
   },
 };

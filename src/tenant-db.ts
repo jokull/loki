@@ -250,6 +250,13 @@ export class TenantDB extends DurableObject<Env> {
     }
   }
 
+  /** Purge ALL of this tenant's content storage (used by site purge/reaper).
+   * After this the DO hibernates empty; a fresh idFromName(siteId) starts blank. */
+  async destroy(): Promise<void> {
+    this.cms = null;
+    await this.ctx.storage.deleteAll();
+  }
+
   /** Resolve a model ref (id OR api_key) in THIS tenant's schema — for the
    * migration guard (which must read the tenant's own models, not the supervisor
    * D1). Returns null if not found. */
@@ -324,6 +331,11 @@ export class TenantFeatureDB extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     this.sqlStore = ctx.storage.sql;
+  }
+
+  /** Purge ALL of this tenant's feature data + logs + end-user auth (site purge). */
+  async destroy(): Promise<void> {
+    await this.ctx.storage.deleteAll();
   }
 
   /** drizzle sqlite-proxy contract: positional rows for reads, empty for run. */

@@ -21,9 +21,12 @@ import {
   restoreSite,
   unpublishSite,
   republishSite,
+  deletedAgeMs,
   RECOVERY_WINDOW_DAYS,
+  PURGE_LOCK_HOURS,
   type Site,
 } from "shared/data";
+import { purgeSite } from "./lifecycle";
 
 const APEX = "loftur.app";
 const siteUrl = (s: string) => `https://${s}.${APEX}`;
@@ -282,6 +285,36 @@ export const ACCOUNT_TOOLS: AccountTool[] = [
         subdomain: found.site.subdomain,
         status: "active",
         url: siteUrl(found.site.subdomain),
+      });
+    },
+  },
+  {
+    name: "purge_site",
+    description:
+      "PERMANENTLY destroy a deleted site NOW and free its subdomain — IRREVERSIBLE (content, feature DB, end-user logins, uploads all gone). Only works on a site you've already deleted (status=deleted) that's been deleted for 24h+ — a guaranteed recovery window even a leaked token can't skip. Otherwise just let it reap after 7 days.",
+    inputSchema: { site: z.string().describe("Subdomain or id of a deleted site.") },
+    handler: async (args, { env, email }) => {
+      const found = await resolveOwnedSite(env, email, str(args.site));
+      if ("error" in found) return err(found.error);
+      const site = found.site;
+      if (site.status !== "deleted") {
+        return err(
+          `purge_site only works on a DELETED site (status: "${site.status}"). delete_site first — it stays recoverable for 7 days.`,
+        );
+      }
+      const ageMs = deletedAgeMs(site) ?? 0;
+      const lockMs = PURGE_LOCK_HOURS * 3600000;
+      if (ageMs < lockMs && site.deleted_at) {
+        const unlock = new Date(new Date(site.deleted_at).getTime() + lockMs).toISOString();
+        return err(
+          `Purge is time-locked for ${PURGE_LOCK_HOURS}h after delete (a recovery window even a leaked token can't skip). "${site.subdomain}" can be purged after ${unlock}, or it reaps automatically at 7 days. restore_site to keep it.`,
+        );
+      }
+      await purgeSite(env, site.id);
+      return ok({
+        subdomain: site.subdomain,
+        purged: true,
+        note: `Permanently deleted. "${site.subdomain}.loftur.app" is now free to claim again.`,
       });
     },
   },

@@ -10,6 +10,9 @@
   "workers_dev": true,
   // Bundle SKILL.md as a text module so index.ts can serve it at /skill.md.
   "rules": [{ "type": "Text", "globs": ["**/*.md"] }],
+  // Hourly: agent-cms scheduled content transitions + the site-lifecycle reaper
+  // (hard-purge `deleted` sites past the 7-day window). Cheap when idle.
+  "triggers": { "crons": ["0 * * * *"] },
   "routes": [
     { "pattern": "loftur.app", "custom_domain": true },
     { "pattern": "*.loftur.app/*", "zone_name": "loftur.app" },
