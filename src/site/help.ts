@@ -326,8 +326,12 @@ Only HTTP(S) via \`fetch\` is mediated — raw TCP sockets are not available. Ou
 fetch is server-only; the browser build never makes these calls.
 
 To RESTRICT egress, add an \`allowedHosts\` array to \`loki.config.json\` — requests to
-any other host are blocked (403). A listed host also allows its subdomains
-(\`stripe.com\` allows \`api.stripe.com\`). Omit it (or leave empty) to allow all hosts.
+any other host are blocked. A blocked request does NOT throw: \`fetch()\` RESOLVES
+with a \`403\` Response (body: "Outbound request to … blocked"), so a naive
+\`if (!res.ok)\` treats a policy denial like an upstream 403 — check the body or
+keep the host in \`allowedHosts\`. Every outbound call (allowed + blocked) is in
+\`site_logs\`. A listed host also allows its subdomains (\`stripe.com\` allows
+\`api.stripe.com\`). Omit it (or leave empty) to allow all hosts.
 
     { "writableModels": [...], "allowedHosts": ["api.stripe.com", "api.resend.com"] }
 
@@ -895,6 +899,23 @@ Then \`publish_site\` — it snapshots the asset manifest into the version and w
 \`public/foo.ext\` asset. \`site_list\` shows assets alongside code; \`site_read\` on a
 \`public/…\` path returns metadata (not bytes); \`site_delete\` removes an asset;
 \`site_diff\` shows added/changed/removed assets (compared by content hash).
+
+## Content authoring (schema + records via the CMS tools)
+
+You model content with the CMS tools (create_model / create_field / create_record).
+A few shapes that aren't obvious:
+- **Relations.** A to-one \`link\` field takes \`validators: { item_item_type: [target] }\`;
+  a to-many \`links\` field takes \`validators: { items_item_type: [target] }\` — a BARE
+  array of the target model's api_key (a model ID also works; it's normalized). Read
+  them nested in GraphQL: \`allBlogPosts { tags { name } }\`.
+- **Boolean validators.** \`required\` / \`unique\` / \`searchable\` accept \`true\` OR the
+  DatoCMS empty-object form \`{}\` (both mean enabled).
+- **Writing a structured_text field.** The value is wrapped: pass
+  \`data: { body: { value: { schema: "dast", document: { … } } } }\` to create_record
+  (you READ it back as \`body { value }\` — see renderStructuredText above).
+- \`create_record\` takes the field payload under \`data\` (NOT \`fields\`); an unknown
+  top-level key is rejected. Required fields are enforced at set_publish_status /
+  publish, not necessarily at draft create.
 
 ## GraphQL notes
 
