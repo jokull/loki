@@ -71,12 +71,13 @@ async function main() {
   const cm = await callTool("create_model", { name: "Widget", apiKey: "widget" });
   const modelId = (text(cm).match(/"id"\s*:\s*"([^"]+)"/) || [])[1];
   ok("#2 setup: create_model", !cm.isError && !!modelId, modelId || text(cm).slice(0, 80));
-  await callTool("create_field", {
+  const cf = await callTool("create_field", {
     modelId,
     label: "Headline",
     apiKey: "headline",
     fieldType: "string",
   });
+  const fieldId = (text(cf).match(/"id"\s*:\s*"([^"]+)"/) || [])[1];
 
   let sawField = false;
   for (let i = 0; i < 6 && !sawField; i++) {
@@ -99,6 +100,17 @@ async function main() {
     "#2 write-time gql validation sees the new field (no stale-schema error)",
     !/Cannot query field .headline./i.test(text(wr)),
     (text(wr).match(/Cannot query field[^\n]*/) || ["clean"])[0].slice(0, 80),
+  );
+
+  // #3 (pen test H1) — the migration guard must block deleting a field the
+  // PUBLISHED site queries, on a TENANT site (was a no-op: guard read the
+  // supervisor D1, not the tenant DO, so every destructive op passed).
+  await callTool("publish_site", { message: "footprint uses headline" });
+  const del = await callTool("delete_field", { fieldId });
+  ok(
+    "#3 migration guard blocks delete_field of a published-dependent field (tenant)",
+    del.isError === true && /migration guard/i.test(text(del)),
+    text(del).split("\n")[0].slice(0, 90),
   );
 
   const passed = results.filter(Boolean).length;

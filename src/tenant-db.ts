@@ -249,6 +249,37 @@ export class TenantDB extends DurableObject<Env> {
       return 0;
     }
   }
+
+  /** Resolve a model ref (id OR api_key) in THIS tenant's schema — for the
+   * migration guard (which must read the tenant's own models, not the supervisor
+   * D1). Returns null if not found. */
+  async resolveModelRef(ref: string): Promise<{ id: string; api_key: string } | null> {
+    const rows = this.sqlStore
+      .exec("SELECT id, api_key FROM models WHERE id = ?1 OR api_key = ?1 LIMIT 1", ref)
+      .toArray();
+    return (rows[0] as { id: string; api_key: string } | undefined) ?? null;
+  }
+
+  /** Resolve a field ref (id OR api_key) + its parent model api_key in THIS
+   * tenant's schema — for the migration guard. Returns null if not found. */
+  async resolveFieldRef(
+    ref: string,
+  ): Promise<{ id: string; api_key: string; field_type: string; model_api_key: string } | null> {
+    const rows = this.sqlStore
+      .exec(
+        `SELECT f.id AS id, f.api_key AS api_key, f.field_type AS field_type,
+                m.api_key AS model_api_key
+           FROM fields f JOIN models m ON m.id = f.model_id
+          WHERE f.id = ?1 OR f.api_key = ?1 LIMIT 1`,
+        ref,
+      )
+      .toArray();
+    return (
+      (rows[0] as
+        | { id: string; api_key: string; field_type: string; model_api_key: string }
+        | undefined) ?? null
+    );
+  }
 }
 
 // ---- TenantFeatureDB: the tenant's own app-data database ---------------------

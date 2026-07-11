@@ -17,7 +17,7 @@
 import type { Env } from "./env";
 import type { Footprint } from "./site/publish";
 import { fieldSurface, modelSurface } from "./site/naming";
-import { getPublishedVersionId, getVersion } from "./site/store";
+import { DEFAULT_SITE_ID, getPublishedVersionId, getVersion } from "./site/store";
 
 export const GUARDED_TOOLS = new Set([
   "delete_model",
@@ -54,8 +54,17 @@ interface ResolvedField {
   model_api_key: string;
 }
 
-/** Resolve a model reference (id or api_key) to its row. */
-async function resolveModel(env: Env, ref: string): Promise<ResolvedModel | null> {
+// Schema (models/fields) lives per-site: the default site in the supervisor D1,
+// a tenant site in its OWN DO. Reading env.DB for a tenant returns null → the
+// guard would silently ALLOW every destructive op (the bug that let delete_field
+// break a live tenant). Route to the right store.
+function tenantStub(env: Env, siteId: string) {
+  return env.TENANT_DB.get(env.TENANT_DB.idFromName(siteId));
+}
+
+/** Resolve a model reference (id or api_key) to its row, for THIS site. */
+async function resolveModel(env: Env, siteId: string, ref: string): Promise<ResolvedModel | null> {
+  if (siteId !== DEFAULT_SITE_ID) return tenantStub(env, siteId).resolveModelRef(ref);
   return await env.DB.prepare(
     `SELECT id, api_key FROM models WHERE id = ?1 OR api_key = ?1 LIMIT 1`,
   )
@@ -63,8 +72,9 @@ async function resolveModel(env: Env, ref: string): Promise<ResolvedModel | null
     .first<ResolvedModel>();
 }
 
-/** Resolve a field reference (id or api_key) to its row + parent model api_key. */
-async function resolveField(env: Env, ref: string): Promise<ResolvedField | null> {
+/** Resolve a field reference (id or api_key) to its row + parent model, for THIS site. */
+async function resolveField(env: Env, siteId: string, ref: string): Promise<ResolvedField | null> {
+  if (siteId !== DEFAULT_SITE_ID) return tenantStub(env, siteId).resolveFieldRef(ref);
   return await env.DB.prepare(
     `SELECT f.id AS id, f.api_key AS api_key, f.field_type AS field_type,
             m.api_key AS model_api_key
@@ -183,7 +193,7 @@ async function checkModelContract(
 
 async function guardOp(env: Env, siteId: string, opDesc: SchemaOp): Promise<GuardResult> {
   if (opDesc.kind === "model") {
-    const model = await resolveModel(env, opDesc.ref);
+    const model = await resolveModel(env, siteId, opDesc.ref);
     // Unknown target: let agent-cms produce the authoritative "not found".
     if (!model) return { allowed: true };
     if (opDesc.op === "update") {
@@ -193,7 +203,7 @@ async function guardOp(env: Env, siteId: string, opDesc: SchemaOp): Promise<Guar
     return await checkModelContract(env, siteId, model);
   }
 
-  const field = await resolveField(env, opDesc.ref);
+  const field = await resolveField(env, siteId, opDesc.ref);
   if (!field) return { allowed: true };
   if (opDesc.op === "update") {
     const rename = opDesc.newApiKey != null && opDesc.newApiKey !== field.api_key;
