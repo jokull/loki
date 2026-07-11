@@ -186,7 +186,7 @@ export function buildClientBuild(path: string, source: string): ClientBuildResul
         `browser build is SYNTHESIZED entirely from its serverFn exports, so any ` +
         `other value export would be DROPPED from the client build (and its source ` +
         `is deliberately never shipped to the browser). Move the serverFn(s) into ` +
-        `their own module (e.g. functions/${path.split("/").pop()}) that exports ` +
+        `a NEW module (e.g. functions/${(path.split("/").pop() ?? "module").replace(/\.[^.]+$/, "")}-fns.ts) that exports ` +
         `ONLY serverFns (and \`import type\` types), and import your component/` +
         `helper from elsewhere. This keeps handler source (secrets, gql, logic) off ` +
         `the client.`,

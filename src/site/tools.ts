@@ -22,7 +22,7 @@ import {
   type AssetManifest,
 } from "./store";
 import { transpileModule, buildClientBuild } from "./transpile";
-import { BUILTIN_SPECIFIERS, parseBareImports, resolveDep } from "./deps";
+import { BUILTIN_SPECIFIERS, parseBareImports, parseNodeBuiltinImports, resolveDep } from "./deps";
 import { buildDraftBundle } from "./serve";
 import { extractDocsFromFile, publishSite, validateDocuments } from "./publish";
 import { getSchemaBundle } from "./schema-types";
@@ -201,6 +201,22 @@ export const SITE_TOOLS: SiteTool[] = [
       const clientBuild = buildClientBuild(path, source);
       if (!clientBuild.ok) {
         return errorResult(`Write rejected for ${path}:\n${clientBuild.error}`);
+      }
+
+      // Node builtins can't load in the site isolate (no nodejs_compat). Reject
+      // them at write time — otherwise a direct `import ... from "node:fs"` slips
+      // past the bare-specifier resolver and only surfaces as a runtime 500. (The
+      // docs already promise this rejection.)
+      const nodeBuiltins = parseNodeBuiltinImports(source);
+      if (nodeBuiltins.length > 0) {
+        return errorResult(
+          `Write rejected for ${path}: imports the Node builtin(s) ${nodeBuiltins
+            .map((n) => `\`${n}\``)
+            .join(", ")}, which aren't available in the site isolate (no ` +
+            `nodejs_compat). Use a workerd-compatible package or the platform ` +
+            `capabilities on \`env\` (GRAPHQL / RECORDS / FEATURES_SQL / SECRETS / ` +
+            `AUTH / MAIL / UPLOADS / mediated fetch) instead.`,
+        );
       }
 
       // Dependency resolution (NO allowlist). Detect the bare specifiers this

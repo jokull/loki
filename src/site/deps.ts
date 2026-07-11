@@ -83,6 +83,22 @@ export function parseBareImports(source: string): string[] {
 }
 
 /**
+ * `node:` builtin specifiers imported by a source module. Site isolates have NO
+ * `nodejs_compat`, so these can't load — they must be REJECTED at write time
+ * (they otherwise slip past the bare-specifier resolver and only surface as a
+ * runtime `No such module "node:fs"` 500). Returns [] when clean.
+ */
+export function parseNodeBuiltinImports(source: string): string[] {
+  const out = new Set<string>();
+  let m: RegExpExecArray | null;
+  SPEC_RE.lastIndex = 0;
+  while ((m = SPEC_RE.exec(source))) {
+    if (m[2].startsWith("node:")) out.add(m[2]);
+  }
+  return [...out];
+}
+
+/**
  * Every bare specifier a bundle imports that is NOT a Loki built-in — i.e. every
  * candidate npm dep that must be resolved + assembled into the isolate. There is
  * no name allowlist: support is determined empirically by test-load at resolve

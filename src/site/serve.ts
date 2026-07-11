@@ -214,7 +214,11 @@ async function runSite(
   try {
     return await stub.getEntrypoint().fetch(forwarded);
   } catch (err) {
-    const message = err instanceof Error ? (err.stack ?? err.message) : String(err);
+    // The actionable message goes to the client; the full stack + internal
+    // isolate cache-key go ONLY to site_logs (never leaked in the response body,
+    // and not mislabeled "loader" — this catches any render/island/loader error).
+    const clientMessage = err instanceof Error ? err.message : String(err);
+    const detail = err instanceof Error ? (err.stack ?? err.message) : String(err);
     const path = (() => {
       try {
         return new URL(request.url).pathname;
@@ -222,11 +226,11 @@ async function runSite(
         return "?";
       }
     })();
-    ctx.waitUntil(logLine(env, siteId, "error", `render ${path}`, message));
-    return new Response(`Site worker error (loader ${loaderId}):\n${message}`, {
-      status: 500,
-      headers: { "content-type": "text/plain; charset=utf-8" },
-    });
+    ctx.waitUntil(logLine(env, siteId, "error", `render ${path} [${loaderId}]`, detail));
+    return new Response(
+      `Site render error at ${path}:\n${clientMessage}\n\n(full stack trace in site_logs)`,
+      { status: 500, headers: { "content-type": "text/plain; charset=utf-8" } },
+    );
   }
 }
 
@@ -436,10 +440,17 @@ export async function serveSite(
   const cookie = getCookie(request, PREVIEW_COOKIE);
   const previewOk = !!cookie && (await isValidPreviewToken(env, siteId, cookie));
 
-  // Routes take precedence over static files: dispatch to the site worker
-  // first, and only fall back to a public/ static asset when it 404s. The
-  // isolate is cache-warm, so the fallback costs one extra R2 lookup on a
-  // genuine miss. Draft cookie -> draft manifest; otherwise published manifest.
+  // Precedence: a FILE-LIKE path (its last segment has an extension, e.g.
+  // /favicon.svg, /og.png, /files/brochure.pdf) is served from public/ FIRST, so
+  // a greedy dynamic route like `[lang]` (= /:lang) can't shadow static assets
+  // (reported: favicon/og served the page as HTML). Extensionless paths route as
+  // normal, with the usual static fallback on a 404. Draft cookie -> draft
+  // manifest; otherwise published manifest.
+  const lastSegment = url.pathname.split("/").pop() ?? "";
+  if (lastSegment.includes(".")) {
+    const asset = await serveStaticAsset(env, siteId, request, { draft: previewOk });
+    if (asset) return asset;
+  }
   const response = previewOk
     ? await serveDraft(env, ctx, request, siteId)
     : await servePublished(env, ctx, request, siteId);

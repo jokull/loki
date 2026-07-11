@@ -47,6 +47,13 @@ claude mcp add loftur --transport http https://loftur.app/mcp \
 }
 ```
 
+**Connecting notes.** Some agent hosts only project a newly-added MCP server's
+tools into the *next* turn/session — if the `loftur.app` tools don't appear
+immediately after adding the server, start a fresh turn (or drive the endpoint
+directly with a small HTTP JSON-RPC client meanwhile). Calls to `/mcp` go over
+the network, so treat a transient network error (e.g. `ENETDOWN`) as retryable —
+retry the same tool call rather than assuming it failed.
+
 ## 2. Orient, then claim a site
 
 Everything below happens over that ONE connection.

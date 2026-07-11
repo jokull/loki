@@ -297,16 +297,20 @@ function buildAccountServer(env: Env, ctx: ExecutionContext, email: string): Ser
     }
 
     // A build/content tool: resolve + ownership-check the target site, then strip
-    // the `site` selector and dispatch to that site (owner-level).
-    const found = await resolveOwnedSite(
-      env,
-      email,
-      typeof args.site === "string" ? args.site : "",
-    );
+    // the selector and dispatch to that site (owner-level). Accept `subdomain` as
+    // an alias for `site` — claim_site returns a `subdomain` field, so agents
+    // naturally reach for it.
+    const siteRef =
+      typeof args.site === "string"
+        ? args.site
+        : typeof args.subdomain === "string"
+          ? args.subdomain
+          : "";
+    const found = await resolveOwnedSite(env, email, siteRef);
     if ("error" in found) {
       return { content: [{ type: "text", text: found.error }], isError: true };
     }
-    const { site: _site, ...rest } = args;
+    const { site: _site, subdomain: _subdomain, ...rest } = args;
     return dispatchSiteCall(env, ctx, found.site.id, name, rest);
   });
 

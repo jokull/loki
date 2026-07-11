@@ -560,15 +560,32 @@ function renderHead(head, hasStyles) {
       parts.push("<meta " + attrs + ">");
     }
   }
+  // Render author links, deduped by href, and note if they already linked a
+  // stylesheet — so the zero-config auto-link below yields instead of emitting a
+  // confusing second <link> (reported: a versioned stylesheet + auto styles.css
+  // both showed up while iterating on a redesign).
+  const seenLinkHrefs = new Set();
+  let authorHasStylesheet = false;
   if (head && Array.isArray(head.links)) {
     for (const l of head.links) {
+      const href = l && l.href;
+      if (href && seenLinkHrefs.has(href)) continue;
+      if (href) seenLinkHrefs.add(href);
+      const rel = (l && l.rel) || "";
+      if (typeof rel === "string" && rel.split(/\s+/).indexOf("stylesheet") !== -1) {
+        authorHasStylesheet = true;
+      }
       const attrs = Object.keys(l)
         .map((k) => k + '="' + escapeHtml(l[k]) + '"')
         .join(" ");
       parts.push("<link " + attrs + ">");
     }
   }
-  if (hasStyles) parts.push('<link rel="stylesheet" href="/styles.css">');
+  // Zero-config convenience: auto-link styles.css — but ONLY when the author
+  // hasn't taken control of styling with their own stylesheet link.
+  if (hasStyles && !authorHasStylesheet && !seenLinkHrefs.has("/styles.css")) {
+    parts.push('<link rel="stylesheet" href="/styles.css">');
+  }
   return parts.join("");
 }
 
